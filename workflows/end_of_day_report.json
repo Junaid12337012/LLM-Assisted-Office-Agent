@@ -1,0 +1,31 @@
+﻿{
+  "id": "end_of_day_report",
+  "version": "1.0.0",
+  "steps": [
+    {
+      "step_id": "export_summary",
+      "action": {
+        "type": "reports.export_summary",
+        "args": {
+          "run_date": "{run_date}",
+          "export_path": "{export_path}"
+        },
+        "on_fail": {"strategy": "abort"}
+      },
+      "validate": [
+        {
+          "kind": "files.exists",
+          "args": {"path": "{summary_path}"},
+          "on_fail": {"strategy": "abort"}
+        }
+      ]
+    }
+  ],
+  "success_criteria": [
+    {
+      "kind": "files.exists",
+      "args": {"path": "{summary_path}"},
+      "on_fail": {"strategy": "abort"}
+    }
+  ]
+}

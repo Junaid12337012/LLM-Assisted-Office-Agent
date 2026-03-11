@@ -1,0 +1,49 @@
+﻿{
+  "id": "mvp_end_day",
+  "version": "1.0.0",
+  "inputs": {
+    "summary_output": "data/evidence/exports/end_of_day_summary.json"
+  },
+  "steps": [
+    {
+      "step_id": "export_summary",
+      "action": {
+        "type": "reports.export_summary",
+        "args": {
+          "run_date": "{run_date}",
+          "export_path": "{summary_output}"
+        },
+        "on_fail": {"strategy": "abort"}
+      },
+      "validate": [
+        {
+          "kind": "files.exists",
+          "args": {"path": "{summary_path}"},
+          "on_fail": {"strategy": "abort"}
+        }
+      ]
+    },
+    {
+      "step_id": "open_summary",
+      "action": {
+        "type": "desktop.launch_app",
+        "args": {"command": "notepad.exe \"{summary_output}\""},
+        "on_fail": {"strategy": "abort"}
+      },
+      "validate": [
+        {
+          "kind": "files.exists",
+          "args": {"path": "{summary_output}"},
+          "on_fail": {"strategy": "abort"}
+        }
+      ]
+    }
+  ],
+  "success_criteria": [
+    {
+      "kind": "files.exists",
+      "args": {"path": "{summary_output}"},
+      "on_fail": {"strategy": "abort"}
+    }
+  ]
+}

@@ -1,0 +1,1071 @@
+Building a Command-Based, Self-Owned Desktop
+Automation Platform That Evolves Into an
+LLMAssisted Office Agent
+
+Executive summary
+
+A "self-owned" desktop automation platform (no thirdparty agent frameworks) is best built as a command
+runner + workflow engine first, then progressively augmented with state observation, validation/
+recovery, evidence memory, and finally an LLM orchestration layer that converts natural language into
+structured actions and handles edge cases. The key design decision is to treat the LLM as one module
+(planner/interpreter) inside a deterministic automation system--rather than letting the LLM directly drive
+every click.
+
+For browser tasks, Playwright is a strong default because it provides robust, crossbrowser automation and
+supports both sync and async APIs in Python, including isolated "browser contexts" that can avoid writing
+session state to disk when desired. 1 For Windows desktop apps, pywinauto is a practical default
+because it is designed specifically to automate the Windows GUI via supported accessibility/backends and
+includes patterns for attaching to apps and finding controls. 2 For OCR and document/image
+understanding, an effective starting stack is OpenCV preprocessing + Tesseract OCR, with
+humanintheloop review when confidence is low; Tesseract is an opensource OCR engine with an API and
+a documented training workflow. 3
+
+To evolve into an LLMassisted office agent, use the OpenAI Responses API for multimodal (text+image)
+inputs, stateful interactions, and tool/function calling. 4 Enforce structured action outputs using
+Structured Outputs (JSON Schema constrained outputs) to reduce syntax errors and keep the LLM "inside
+the rails." 5 For safety, implement a permission model and require confirmations for highimpact actions;
+OpenAI's "computer use" guidance also emphasizes humanintheloop for high impact actions and treating
+page content as untrusted input. 6
+
+Reference architecture and data flow
+
+Core principle
+
+Build an automation platform that is deterministic by default, observable, and recoverable; the LLM
+layer becomes an optional "brain" that proposes actions but does not bypass your platform's safety,
+validation, and logging.
+
+Module map and responsibilities
+
+Command UI - A desktop app that accepts typed commands ("run daily report"), lets you pick saved
+workflows, and shows run status, logs, and exceptions.
+
+                                                                           1
+Command registry - A catalog of commands with metadata: description, required parameters, associated
+workflow(s), allowed apps/domains, and risk level.
+
+Workflow engine - Executes workflows as a state machine: step  validate  next step; supports
+branching, retries, and resume-from-failure.
+
+Observer / state reader - Creates a structured snapshot of "what's happening now" (active window, UI tree
+where available, browser URL/DOM state, known popups, optional screenshot). - Prefer eventdriven
+observation when possible: Windows UI Automation allows subscribing to events to reduce polling (better
+performance). 7
+
+Executor - Low-level action runner: click, type, hotkeys, open app, navigate browser, handle files. - Desktop:
+pywinauto (Windows-first) 8
+- Browser: Playwright 9
+
+Recovery - Error signature detection (popup text, failed downloads, timeouts, missing controls) and
+recovery rules (retry, refresh, reopen, fallback to screenshot, escalate).
+
+Memory - SQLite-backed storage of runs, step traces, evidence artifacts (screenshots, OCR text), learned
+selectors, and error frequencies (Python's sqlite3 module is DBAPI compatible and commonly used for
+prototyping persistent storage). 10
+
+Safety / policy - Allowed/blocked actions, confirmations, credential protections, domain allowlists,
+destructive command gating, and audit logging.
+
+LLM layer - Two roles: 1) Command interpreter: natural language  command + parameters + chosen
+workflow
+2) Planner / edge-case handler: suggests next step when rules fail, interprets new error text, proposes
+recovery actions
+- Implement via Responses API (stateful, multimodal, tool/function calling). 11
+- Use Structured Outputs to produce schema-valid action calls. 5
+
+Architecture diagram
+
+   flowchart TD
+      UI[Command UI<br/>(Desktop app)] --> CR[Command Registry<br/>(commands +
+
+   params + risk)]
+      UI --> RUN[Run Controller<br/>(start/pause/stop)]
+      RUN --> WF[Workflow Engine<br/>(state machine)]
+      WF --> OBS[Observer / State Reader<br/>(events + snapshots)]
+      OBS --> WF
+
+      WF --> VAL[Validator<br/>(pre/post conditions)]
+      VAL --> WF
+
+      WF --> EXE[Executor<br/>(desktop + browser + files)]
+
+                                                                           2
+EXE --> WF
+
+WF --> REC[Recovery Engine<br/>(signatures + retries + fallbacks)]
+REC --> WF
+
+WF --> MEM[Memory (SQLite)<br/>(runs, evidence, selectors)]
+OBS --> MEM
+EXE --> MEM
+REC --> MEM
+VAL --> MEM
+
+WF --> SAFE[Safety / Policy Gate<br/>(allow/deny + confirm)]
+SAFE --> EXE
+
+WF --> LLM[LLM Layer (optional)<br/>Responses API + tools]
+LLM --> WF
+
+Phased roadmap with deliverables and success metrics
+
+A realistic sequence is four phases. You can accelerate, but skipping observability/recovery usually causes
+brittle automations.
+
+Phase definitions and milestones
+
+Phase Goal            Key deliverables            Milestones         Success metrics
+                                                                     (examples)
+Phase  Command        Command UI (minimal),       Run 1 end-to-end
+1      runner + one   command registry            daily workflow     90% success on
+       reliable       (JSON), workflow engine     from a single      "happy path" for the
+       workflow       v0, executor for            command; stop/     target workflow; mean
+                      desktop+browser, basic      pause works        setup time < 2 min;
+                      logging                                        failures produce
+                                                                     actionable logs
+                      Validator module,
+Phase  Production-    recovery rules engine,      5­10 workflows     95% step success
+2      grade          screenshot capture on       running with       rate; 70% of
+       workflows      failure, evidence store in  retries and        common failures auto-
+       (validation +  SQLite, error signature     resume; exception  recovered; time saved
+       recovery)      table                       inbox in UI        per day measured
+
+Phase  Vision/OCR     OpenCV preprocessing,       At least 2 image-  85% field extraction
+3      pipeline +     OCR extraction, region      heavy processes    accuracy on known
+       human-in-the-  detection templates,        supported with     templates; <5% silent
+       loop           confidence scoring,         review             failures (must be
+                      review UI (approve/                            flagged)
+                      correct), dataset capture
+
+                                  3
+Phase Goal          Key deliverables            Milestones        Success metrics
+                                                                  (examples)
+Phase LLM-assisted  LLM interpreter             Natural language
+                    (NLstructured               commands          80% correct
+4  orchestration    command), tool calling,     correctly map to  NLcommand
+                    structured outputs, "plan   existing          mapping; reduced
+                    then act" loop, guardrails  workflows; LLM    manual interventions;
+                                                handles unknown   improved recovery
+                                                popups and        rate without increased
+                                                suggests          risky actions
+                                                recoveries
+
+Why these phases map to real constraints
+
+        · Desktop automation is most stable when you first identify the correct accessibility/backend
+          technology (pywinauto explicitly calls this out as the first step). 12
+
+        · Event subscriptions can reduce wasteful polling on Windows using UI Automation events
+          (performance win for always-on observers). 13
+
+        · For the LLM loop, OpenAI's function calling flow is explicitly iterative: request  tool call  execute
+           pass tool output  final response (or more calls). 14
+
+        · The Responses API is designed for stateful, multimodal interactions, and supporting tools; it is a
+          better fit than "single prompt" approaches for long-running automation. 15
+
+Tech stack choices and tradeoffs
+
+Recommended baseline (Windows-first, Python)
+
+        · Language: Python (fast iteration, strong automation ecosystem)
+        · Desktop UI automation: pywinauto (Windows) 8
+        · Browser automation: Playwright 9
+        · OCR: Tesseract + Python wrapper (e.g., pytesseract ) 16
+        · Vision preprocessing: OpenCV (licensed Apache 2.0 in modern versions) 17
+        · GUI: PySide6 (Qt for Python) or Tkinter 18
+        · Storage: SQLite via Python sqlite3 10
+        · LLM layer: OpenAI Responses API + function calling + Structured Outputs 19
+        · Secrets: OS keychain via keyring (optional but recommended) 20
+        · Encryption fallback (Windows): DPAPI (CryptProtectData / CryptUnprotectData) 21
+        · Testing: pytest 22
+        · Concurrency: asyncio (especially for browser automation and parallel tasks) 23
+
+                                      4
+Desktop UI automation libraries
+
+Option           Pros                     Cons                   Performance/          OS notes
+                                                                 security notes
+pywinauto        Designed for             Windows-only; some                           Windows
+                 automating               legacy apps expose     Prefer control-level  primary
+Microsoft UI     Windows GUI;             weak accessibility     automation over
+Automation       encourages               trees; may need        pixel clicks for      Windows
+(direct)         choosing the right       fallback methods       robustness; keep      primary
+                 accessibility backend                           an allowlist of
+PyAutoGUI        first; supports                                 target apps           Windows/
+                 attaching to apps/                                                    macOS/
+macOS UI         controls 8                                      Great for an          Linux 25
+scripting                                                        always-on
+(AppleScript/    Event subscription       Lower-level            observer; must be     macOS
+JXA              reduces polling          complexity; COM        careful with
+accessibility)   overhead; rich event     interfaces; threading  handler                 26
+                 model 13                 cautions (event        registration/
+Linux ATSPI                               handler add/remove     remove patterns       Linux 27
+(accessibility)                           threading constraints
+                                          exist) 24              Use as fallback
+                                                                 when accessibility
+                 Cross-platform           Pixel-based            tree is unavailable;
+                 mouse/keyboard +         automation is brittle  add safety delays
+                 basic image              across DPI scaling/    and confirmations
+                 recognition 25           theme changes;
+                                          weaker semantic        Treat as privileged:
+                                          understanding          gate actions and
+                                                                 restrict scopes
+                 Apple documents UI       Permission prompts
+                 scripting via            and sandboxing         Suitable for
+                 accessibility; requires  constraints; less      observer/event-
+                 explicit user            uniform than           driven approaches
+                 permission per app       Windows                where available
+                 for security 26
+
+                 GNOME stack uses         Desktop environment
+                 ATSPI D-Bus              differences; uneven
+                 protocol for             support outside GTK
+                 accessibility; toolkit-  apps
+                 level support in GTK
+
+                   27
+
+Browser automation with Playwright
+
+Playwright provides installation steps (including browser binaries) and both sync/async APIs. 28 It also
+supports browser contexts for isolation and can use nonpersistent contexts that don't write browsing
+data to disk (useful for privacy and test-like repeatability). 29
+
+                                                5
+Security note: use context isolation and domain allowlists; for sensitive workflows (e.g., payroll portals), run
+a dedicated profile/context per target system and keep credential access gated.
+
+OCR and vision
+
+        · Tesseract: open-source OCR engine (Apache 2.0), includes user manual and training references; no
+          built-in GUI. 16
+
+        · OpenCV: broad CV toolkit; modern versions are Apache 2.0 licensed. 30
+        · OpenCV preprocessing that commonly improves OCR includes thresholding and morphological
+
+          operations. 31
+        · Region detection approaches include contours; OpenCV advises threshold/edge detection before
+
+           findContours for better accuracy. 32
+Alternatives worth evaluating (not agent frameworks; just OCR/CV): EasyOCR, PaddleOCR, and cloud OCR.
+They can outperform Tesseract on certain fonts/layouts but add heavier dependencies and sometimes GPU
+considerations (recommend using them only once you have clear OCR benchmarks for your documents).
+
+GUI frameworks
+
+        · PySide6 (Qt for Python): official Qt bindings; good for richer desktop UI, docking layouts, workflow
+          editors, and dashboards. 33
+
+        · Tkinter: standard Python interface to Tcl/Tk; typically bundled and quick to ship small UIs. 34
+Recommendation: start with Tkinter for v1 speed, migrate to PySide6 when you need a workflow editor,
+multiple panes, and a more scalable UI architecture.
+
+LLM integration patterns
+
+Use the Responses API as the core LLM interface because it supports text+image inputs, stateful
+interactions, and tools/function calling. 35
+
+Tool/function calling loop (canonical pattern): request with available tools  receive tool call  execute
+tool  send tool output back  final response or more calls. 14
+
+Structured Outputs: enforce JSON Schema compliance when the model outputs actions or structured data
+(reduces brittle parsing). 5
+
+Optional (advanced): OpenAI's "computer use" tool guidance highlights harness shapes (built-in tool vs
+custom tools layered on top of existing automation harnesses) and recommends isolation and human-in-
+the-loop for high-impact actions. Even if you don't use the built-in computer tool, its harness and safety
+guidance is directly applicable to your custom executor. 6
+
+Design patterns with schemas and examples
+
+This section provides concrete patterns to keep your platform "engineered," not ad-hoc.
+
+                                                                           6
+Command  workflow  actions layering
+
+Commands are user-facing (stable names, parameters, permissions).
+Workflows are business processes (sequenced steps with validations and branches).
+Actions are atomic executor operations (click, type, select window, OCR region, move file).
+
+This layering keeps your system maintainable and makes "teaching" new office processes additive.
+
+Action schema (atomic operations)
+
+Key design idea: every action returns a structured result ( success , artifacts , observations ,
+ error_signature_candidate ) so the workflow engine can validate/recover deterministically.
+
+   {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "title": "Action",
+      "type": "object",
+      "required": ["id", "type", "args", "timeout_ms", "on_fail"],
+      "properties": {
+          "id": { "type": "string" },
+          "type": {
+              "type": "string",
+              "enum": [
+                 "desktop.focus_window",
+                 "desktop.click_control",
+                 "desktop.send_keys",
+                 "desktop.wait_for_control",
+                 "browser.goto",
+                 "browser.click",
+                 "browser.fill",
+                 "browser.wait_for",
+                 "files.move",
+                 "files.rename",
+                 "vision.capture_screenshot",
+                 "vision.ocr_region"
+              ]
+          },
+          "args": { "type": "object" },
+          "timeout_ms": { "type": "integer", "minimum": 100 },
+          "retry": {
+              "type": "object",
+              "properties": {
+                 "max_attempts": { "type": "integer", "minimum": 0 },
+                 "backoff_ms": { "type": "integer", "minimum": 0 }
+              }
+          },
+
+                                                                           7
+          "on_fail": {
+              "type": "object",
+              "properties": {
+                 "strategy": { "type": "string", "enum": ["retry", "recover",
+
+   "escalate", "abort"] },
+                 "recover_with": { "type": "string", "description": "Recovery rule id" }
+
+              }
+          },
+          "risk": { "type": "string", "enum": ["low", "medium", "high"] }
+      }
+   }
+
+Workflow definition schema (state machine with validation and recovery)
+
+   {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "title": "Workflow",
+      "type": "object",
+      "required": ["id", "version", "steps", "success_criteria"],
+      "properties": {
+          "id": { "type": "string" },
+          "version": { "type": "string" },
+          "inputs": { "type": "object" },
+          "preconditions": {
+              "type": "array",
+              "items": { "type": "string" }
+          },
+          "steps": {
+              "type": "array",
+              "items": {
+                 "type": "object",
+                 "required": ["step_id", "action", "validate"],
+                 "properties": {
+                     "step_id": { "type": "string" },
+                     "action": { "$ref": "#/$defs/actionRef" },
+                     "validate": {
+                         "type": "array",
+                         "items": { "$ref": "#/$defs/validationRule" }
+                     },
+                     "branch": {
+                         "type": "array",
+                         "items": { "$ref": "#/$defs/branchRule" }
+                     }
+                 }
+              }
+          },
+
+                                                                           8
+       "success_criteria": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/validationRule" }
+
+       }
+   },
+   "$defs": {
+
+       "actionRef": {
+          "type": "object",
+          "required": ["type", "args"],
+          "properties": {
+              "type": { "type": "string" },
+              "args": { "type": "object" }
+          }
+
+       },
+       "validationRule": {
+
+          "type": "object",
+          "required": ["kind", "args", "on_fail"],
+          "properties": {
+
+              "kind": {
+                  "type": "string",
+                  "enum": ["ui.has_text", "ui.control_exists", "browser.url_matches",
+
+"files.exists", "data.regex_match", "vision.ocr_confidence_min"]
+              },
+              "args": { "type": "object" },
+              "on_fail": {
+                  "type": "object",
+                  "required": ["strategy"],
+                  "properties": {
+                     "strategy": { "type": "string", "enum": ["recover", "escalate",
+
+"abort"] },
+                     "recover_with": { "type": "string" }
+
+                  }
+              }
+          }
+       },
+       "branchRule": {
+          "type": "object",
+          "required": ["if", "goto_step"],
+          "properties": {
+              "if": { "$ref": "#/$defs/validationRule" },
+              "goto_step": { "type": "string" }
+          }
+       }
+   }
+}
+
+                                                                        9
+Command registry schema (user-facing catalog)
+
+   {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "title": "CommandRegistry",
+      "type": "object",
+      "required": ["commands"],
+      "properties": {
+          "commands": {
+              "type": "array",
+              "items": {
+                 "type": "object",
+                 "required": ["name", "description", "workflow_id", "risk",
+
+   "allowed_targets"],
+                 "properties": {
+                     "name": { "type": "string", "pattern": "^[a-z0-9_\\.]+$" },
+                     "description": { "type": "string" },
+                     "workflow_id": { "type": "string" },
+                     "parameters": {
+                         "type": "array",
+                         "items": {
+                            "type": "object",
+                            "required": ["name", "type", "required"],
+                            "properties": {
+                                "name": { "type": "string" },
+                                "type": { "type": "string", "enum": ["string", "int", "date",
+
+   "path", "enum", "bool"] },
+                                "required": { "type": "boolean" },
+                                "enum": { "type": "array", "items": { "type": "string" } }
+
+                            }
+                         }
+                     },
+                     "risk": { "type": "string", "enum": ["low", "medium", "high"] },
+                     "allowed_targets": {
+                         "type": "object",
+                         "properties": {
+
+                            "apps": { "type": "array", "items": { "type": "string" } },
+                            "domains": { "type": "array", "items": { "type": "string" } },
+                            "folders": { "type": "array", "items": { "type": "string" } }
+                         }
+                     },
+                     "requires_confirmation": { "type": "boolean" }
+                 }
+              }
+          }
+
+                                                                           10
+      }
+   }
+
+Error signature table (detection + recovery mapping)
+
+Store stable, matchable signatures and map them to recovery actions. UI Automation event subscriptions
+can help detect popups and state changes without constant polling on Windows. 36
+
+   {
+      "error_signatures": [
+          {
+              "id": "popup_session_expired",
+              "match": {
+                 "type": "ui.text_contains",
+                 "value": "Session expired"
+              },
+              "scope": {
+                 "app": "Chrome",
+                 "domain": "example-portal.com"
+              },
+              "severity": "medium",
+              "recovery_plan": [
+                 { "type": "browser.reload", "args": {} },
+                 { "type": "workflow.goto_step", "args": { "step_id":
+
+   "login_if_needed" } }
+              ]
+
+          },
+          {
+
+              "id": "file_locked",
+              "match": { "type": "ui.text_regex", "value": "file.*is.*open" },
+              "scope": { "app": "DesktopAppX" },
+              "severity": "high",
+              "recovery_plan": [
+
+                 { "type": "escalate.user_confirm", "args": { "message": "Close the file
+   and click Resume." } }
+
+              ]
+          }
+      ]
+   }
+
+LLM integration pattern: "Interpreter + Planner" with Structured Outputs
+
+Use Responses API for stateful multi-step interactions and function/tool calling. 37 Enforce schemas using
+Structured Outputs. 38
+
+                                                                           11
+LLM responsibilities that remain safe and practical: - Map "do my daily report" 
+ daily_report.run(date=today) - Suggest recovery: interpret unknown popup text, propose a safe
+recovery plan with confirmation - Extract structured fields from OCR text or screenshots (but require
+validation thresholds)
+
+Vision and document intelligence pipeline
+
+Why vision needs a pipeline (not just "OCR everything")
+
+Your platform should treat image/document processing as a data extraction pipeline with: 1)
+preprocessing
+2) region detection (where on the image the field is)
+3) OCR
+4) parsing
+5) confidence scoring
+6) validation rules
+7) human-in-the-loop review when confidence is low
+8) evidence storage (so you can improve over time)
+
+OpenCV offers core preprocessing operations such as thresholding and morphological transforms that are
+commonly used prior to OCR. 31
+
+Tesseract can be used via API to extract printed text from images and supports training workflows (useful
+when your documents use special fonts/layouts). 16
+
+Recommended pipeline stages
+
+Preprocessing (OpenCV) - Convert to grayscale - Denoise (mild blur) - Binarize (global/adaptive
+thresholding) - Morphology (opening/closing) to clean blobs - Resize to improve OCR for small fonts
+
+OpenCV tutorials cover thresholding and morphological operations and the basic functions used. 31
+
+Region detection - Template-based ROI (fastest for stable forms): predefine bounding boxes per document
+type - Contour-based detection for boxes/labels: OpenCV contour methods typically work best on binary
+images after thresholding. 32 - Hybrid approach: use anchor text ("Invoice No") to locate ROI (advanced)
+
+OCR - Use Tesseract with a configuration tuned to your use case (digits-only, single-line, whitelist characters)
+- Keep raw OCR output + confidence-like features (see below) for evidence memory
+
+Confidence scoring Tesseract provides numeric outputs depending on wrapper/tooling; if your OCR
+wrapper doesn't expose confidence, use proxies: - did the text match a regex? - did it contain expected
+anchor labels? - character set sanity checks (digits only) - cross-field consistency (e.g., totals)
+
+Human-in-the-loop review If confidence < threshold: - UI shows the cropped ROI and proposed value -
+user approves/corrects - correction is stored as training/evidence data
+
+                                                                           12
+Teaching-by-examples (retraining strategy) - Store (image, ROI box, OCR text, corrected text, doc type,
+timestamp) - Track failure clusters by hash of layout + error type - Periodically add new templates/ROIs for
+new formats - Consider Tesseract training only when you have enough repeated failures tied to fonts/
+layouts (Tesseract explicitly documents training under its manual). 39
+
+Minimal sample code snippets
+
+OpenCV preprocessing + Tesseract OCR (ROI-based)
+(illustrative--production code should add error handling, logging, and evidence saving)
+
+   import cv2
+   import pytesseract
+
+   def ocr_roi(image_path: str, roi: tuple[int, int, int, int]) -> str:
+          """
+          roi = (x, y, w, h)
+          """
+          img = cv2.imread(image_path)
+          if img is None:
+                 raise FileNotFoundError(image_path)
+
+          x, y, w, h = roi
+          crop = img[y:y+h, x:x+w]
+
+          gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+          # Adaptive thresholding is often useful for uneven lighting
+          thr = cv2.adaptiveThreshold(
+
+                 gray, 255,
+                 cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                 cv2.THRESH_BINARY,
+                 31, 10
+          )
+
+          # Morphological opening can reduce small noise
+          kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (2, 2))
+          clean = cv2.morphologyEx(thr, cv2.MORPH_OPEN, kernel)
+
+          config = r'--oem 1 --psm 7 -c
+   tessedit_char_whitelist=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ-'
+
+          text = pytesseract.image_to_string(clean, config=config).strip()
+          return text
+
+Why these steps: OpenCV thresholding and morphological operations are standard building blocks for
+binarization and cleanup. 31 Tesseract is designed to extract printed text from images via API. 40
+
+                                                                           13
+Contour-based region detection (when ROI isn't fixed)
+Contours typically work best after binarization/edge detection. 32
+
+import cv2
+
+def find_candidate_boxes(gray_img):
+       # threshold first; contours work best on binary images
+       _, bw = cv2.threshold(gray_img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+       contours, _hier = cv2.findContours(bw, cv2.RETR_EXTERNAL,
+
+cv2.CHAIN_APPROX_SIMPLE)
+
+boxes = []
+
+for c in contours:
+
+x, y, w, h = cv2.boundingRect(c)
+
+if w > 80 and h > 15:  # heuristic filters, tune per document
+
+            boxes.append((x, y, w, h))
+
+return boxes
+
+Safety, privacy, performance, UX, and quality engineering
+
+Safety and privacy model
+
+A desktop automation platform is effectively "local RPA with superpowers." You need guardrails equivalent
+to a professional RPA product.
+
+Permission model - Allowlist by default: only automate specified apps/windows and specified domains -
+Action risk levels: low (read-only), medium (data entry), high (send/delete/payment/system settings) - User
+confirmations for high-impact actions (delete files, submit forms, send emails)
+
+Credential handling - Prefer OS keychain storage via keyring (system keyring services across platforms).
+
+  20
+
+- On Windows, DPAPI can encrypt secrets so typically only the same user (and often the same machine) can
+decrypt. 21
+- Never store credentials in plaintext logs or screenshots; automatically redact known input fields and mask
+values at logging boundaries.
+
+Logging and audit - Log: command name, workflow id/version, step ids, timestamps, app/window
+identifiers, and artifact references (not raw credentials) - Store evidence (screenshots, cropped ROIs, OCR
+text) in a structured folder or SQLite blobs, with retention policies
+
+Privacy-by-design tactics - Selective screenshots: only capture when validations fail or when an image-
+based step is required - Non-persistent browser contexts for sensitive tasks can avoid writing browsing
+data to disk. 29
+
+                                        14
+LLM safety - Treat screen/web content as untrusted; require humanintheloop for highimpact actions
+(aligned with OpenAI's computer use guidance). 6
+- Use Structured Outputs to constrain the model to your action schema. 5
+
+Performance and scalability strategies
+
+Event-driven observation - On Windows, subscribing to UI Automation events can eliminate constant
+polling and improve efficiency. 13
+
+Selective capture - Capture screenshots only when: - UI tree is unavailable - validation fails - a new/
+unrecognized popup appears - the workflow requires OCR/image extraction
+
+Caching - Cache: - window handles/control identifiers - workflow "stable selectors" - OCR templates/ROIs
+per document type - Invalidate caches on structure-changed events (Windows UI Automation structure
+changed handlers exist and are documented). 41
+
+Async execution - Use asyncio for IO-bound tasks (browser steps, file downloads, API calls) and for
+scheduling multiple workflows safely. 23
+- Keep a "single writer" policy for UI automation per desktop session to avoid race conditions; run
+parallelism at the workflow queue level, not simultaneous mouse control.
+
+Parallel task handling - Safe parallelism patterns: - Run multiple browser contexts in parallel (Playwright
+contexts isolate sessions). 29 - Run background OCR processing while the main UI automation is waiting
+on downloads - Avoid concurrent desktop mouse/keyboard actions; use a global executor lock
+
+UX recommendations for the command-based desktop app
+
+Minimal v1 UI - Command entry box + "Run" button - Workflow list (searchable) - Live run log pane - Stop /
+Pause / Resume buttons - "Safe mode" toggle (forces confirmations for medium/high risk)
+
+v2+ UI enhancements - Workflow editor: steps as a list with validations and recovery rules - Run
+dashboard: last runs, success rates, time saved - Exception inbox: grouped failures with screenshots and
+"resume from here" - Evidence review panel for OCR: show ROI + extracted value + approve/correct
+
+Implementation choices: - Tkinter is bundled and fast for simple UI creation. 42
+- PySide6 (Qt for Python) is the official Qt binding and scales better for complex editors and dashboards.
+
+  33
+
+Minimal v1 implementation plan
+
+Exact folder structure
+
+   office_automation_platform/
+      pyproject.toml
+      README.md
+      requirements.txt
+
+                                                                           15
+app/                      # UI entrypoint
+   main.py                # Tkinter UI (v1)
+   ui_tk.py               # view models / binding helpers
+   ui_models.py
+
+core/                     # load/validate commands
+   command_registry.py    # state machine runner
+   workflow_engine.py     # active window, basic state snapshot
+   observer.py            # dispatch desktop/browser/file actions
+   executor.py            # pre/post conditions
+   validator.py           # error signatures + recovery plans
+   recovery.py            # policy engine + confirmations
+   safety.py              # SQLite persistence
+   memory.py
+   logging_setup.py
+
+controllers/              # pywinauto harness (Windows-first)
+   desktop_windows.py     # Playwright harness
+   browser_playwright.py  # safe file operations
+   files_local.py         # screenshot capture (later)
+   vision_capture.py      # OCR pipeline (later)
+   vision_ocr.py
+
+workflows/
+   open_workspace.json
+   daily_download_and_rename.json
+   portal_upload.json
+   entry_checker.json
+   end_of_day_report.json
+
+registry/
+   commands.json
+   error_signatures.json
+   policies.json
+
+data/
+   memory.db
+   evidence/
+       screenshots/
+       ocr/
+       exports/
+
+tests/
+   unit/
+   integration/
+
+                                   16
+Required Python packages (v1)
+
+        · playwright (plus playwright install ) 28
+        · pywinauto (Windows) 43
+        · pytest 22
+        · Standard library: sqlite3 10 , asyncio (if used early) 23
+        · Optional in v1: keyring for secrets 44
+
+Add in Phase 3: - opencv-python (OpenCV) 45
+- pytesseract + Tesseract engine installed 16
+
+First five commands/workflows (v1) with pseudocode and estimated dev time
+
+These are deliberately chosen to build platform capabilities progressively.
+
+Command                        Workflow      Step-by-step pseudocode
+ workspace.open_all            focus                                                  Est. dev time
+
+                               Launch apps   (high level)
+                               + focus
+                               windows       1) for each app in              4­8 hours
+                                             allowlist: start/attach 2)
+                                             wait for main window 3)
+                                             arrange windows
+                                             (optional) 4) log success
+
+browser.download_daily_report  Playwright    1) open context 2)              1­2 days
+                               download      navigate to portal 3)
+                               pipeline      login_if_needed 4) click
+                                             report 5) trigger
+                                             download 6) wait file 7)
+                                             move/rename 8) validate
+                                             file exists
+
+portal.upload_latest_file      Upload +      1) locate latest file in        1­2 days
+                               submission    folder 2) browser.goto
+                               validation    upload page 3) set file
+                                             input 4) submit 5)
+                                             validate success text/URL
+                                             6) on fail: retry/refresh
+
+desktop.check_entries          Desktop       1) focus desktop app 2)         2­4 days
+                               software      navigate to "entries" 3)        (depends on
+                               navigation +  iterate rows (N) 4) for         app
+                               checks        each: validate required         accessibility)
+                                             fields 5) capture
+                                             exceptions 6) produce
+                                             summary
+
+                               17
+Command                      Workflow                         Step-by-step pseudocode  Est. dev time
+ reports.end_of_day_summary  focus                            (high level)
+
+                             Aggregation +                    1) query SQLite for      0.5­1 day
+                             logging                          today's runs 2) compute
+                                                              success/fail counts 3)
+                                                              show in UI 4) export
+                                                              simple CSV/PDF
+                                                              (optional)
+
+Why this order: it builds the "spine" (workflow engine, executor, logging) before you tackle fragile image
+understanding.
+
+Testing, QA, and monitoring
+
+Unit tests - Validate schema parsing: command registry and workflow definitions - Safety policy: allowed/
+blocked actions and confirmation gating - Recovery: error signature matching logic
+
+Integration tests - "Dry run" executor with mocked controllers - Playwright sandbox tests using browser
+contexts for isolation (Playwright emphasizes isolation via contexts). 46 - Desktop automation tests where
+possible; for UI-driven components, focus on smoke tests and replayable scenarios
+
+Failure injection - Simulate: - timeouts - missing controls/selectors - popup interruptions - network offline
+(browser) - file lock conflicts - Ensure every failure results in either: - recovery attempted + logged, or - safe
+escalation to user with actionable evidence
+
+Metrics to track - Workflow success rate, step success rate - Mean time per workflow - Mean recovery
+attempts per workflow - % failures auto-recovered - Exception inbox backlog - Time saved per day/week
+(self-reported + measured)
+
+Prioritized next ten tasks to implement
+
+Priority Task                                                 Effort Outcome
+
+               Implement command registry loader +            0.5­1 Stable command catalog; fewer
+P0                                                              day "stringly typed" bugs
+
+               validation
+
+P0  Workflow engine v0 (step  validate                        1­2 days Reliable deterministic execution
+
+    next)
+
+P0  Safety gate (risk levels + confirmation UI)               1 day  Prevent destructive automation
+                                                                     accidents
+
+               Playwright controller baseline (login, click,                   Makes web tasks robust and
+P0                                                            1­2 days
+
+               download)                                                       repeatable 28
+               pywinauto controller baseline (attach/
+P1                                                                             Enables desktop automation on
+               focus/find control)                            1­3 days
+
+                                                                               Windows 47
+
+                                                    18
+Priority Task                                            Effort Outcome
+
+P1  SQLite memory + run logging                          0.5­1.5 Persist "what happened" for
+                                                            days debugging 10
+
+P1  Error signature table + recovery engine v0                            Automated retries and structured
+                                                         1­2 days
+
+                                                                          escalation
+
+P2  Observer improvements: event-driven                                   Reduced polling overhead; faster
+    hooks (Windows UIA events)                           2­5 days
+
+                                                                          detection 48
+
+P2  Exception inbox UI + resume-from-step                2­4 days Practical day-to-day usability
+
+               Vision pipeline MVP (OpenCV preprocess +  4­10 Enables image-heavy processes
+P3
+                                                         days  49
+               Tesseract OCR + review UI)
+
+Official documentation sources to prioritize
+
+Below are official docs the report relied on and that you should keep bookmarked. (Links are provided in a
+code block to comply with strict URL formatting rules.)
+
+Playwright (Python docs)
+https://playwright.dev/python/docs/library
+https://playwright.dev/python/docs/api/class-browsercontext
+
+pywinauto (docs)
+https://pywinauto.readthedocs.io/en/latest/
+https://pywinauto.readthedocs.io/en/latest/getting_started.html
+
+Tesseract OCR (tessdoc)
+https://tesseract-ocr.github.io/tessdoc/
+https://tesseract-ocr.github.io/tessdoc/Installation.html
+
+OpenCV (docs and licensing)
+https://docs.opencv.org/
+https://opencv.org/license/
+
+OpenAI Responses API + tools + function calling + structured outputs
+https://developers.openai.com/api/reference/responses/overview
+https://developers.openai.com/api/docs/guides/function-calling
+https://developers.openai.com/api/docs/guides/tools
+https://developers.openai.com/api/docs/guides/structured-outputs
+
+Windows UI Automation events (performance/event-driven observation)
+https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-eventsoverview
+https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-eventsforclients
+
+                                           19
+These sources support the major implementation choices: Playwright installation and usage patterns 28 ,
+pywinauto's Windows GUI automation and backend selection requirement 8 , Tesseract's OCR engine
+capabilities and installation/training references 16 , OpenCV preprocessing building blocks 31 , and
+OpenAI's Responses API + tool/function calling + Structured Outputs guidance 19 .
+
+ 1 9 28 https://playwright.dev/python/docs/library
+
+https://playwright.dev/python/docs/library
+
+ 2 8 43 https://pywinauto.readthedocs.io/en/latest/
+
+https://pywinauto.readthedocs.io/en/latest/
+
+ 3 39 https://tesseract-ocr.github.io/tessdoc/
+
+https://tesseract-ocr.github.io/tessdoc/
+
+ 4 11 15 19 35 37 https://developers.openai.com/api/reference/responses/overview
+
+https://developers.openai.com/api/reference/responses/overview
+
+ 5 38 https://developers.openai.com/api/docs/guides/structured-outputs/
+
+https://developers.openai.com/api/docs/guides/structured-outputs/
+
+ 6 https://developers.openai.com/api/docs/guides/tools-computer-use
+
+https://developers.openai.com/api/docs/guides/tools-computer-use
+
+ 7 13 https://learn.microsoft.com/en-us/dotnet/framework/ui-automation/ui-automation-events-for-
+clients
+
+https://learn.microsoft.com/en-us/dotnet/framework/ui-automation/ui-automation-events-for-clients
+
+10 https://docs.python.org/3/library/sqlite3.html
+
+https://docs.python.org/3/library/sqlite3.html
+
+12 47 https://pywinauto.readthedocs.io/en/latest/getting_started.html
+
+https://pywinauto.readthedocs.io/en/latest/getting_started.html
+
+14 https://developers.openai.com/api/docs/guides/function-calling
+
+https://developers.openai.com/api/docs/guides/function-calling
+
+16 40 https://tesseract-ocr.github.io/tessdoc/Installation.html
+
+https://tesseract-ocr.github.io/tessdoc/Installation.html
+
+17 30 https://opencv.org/license/
+
+https://opencv.org/license/
+
+18 33 https://doc.qt.io/qtforpython-6/
+
+https://doc.qt.io/qtforpython-6/
+
+20 44 https://keyring.readthedocs.io/en/latest/
+
+https://keyring.readthedocs.io/en/latest/
+
+21 https://learn.microsoft.com/en-us/windows/win32/api/dpapi/nf-dpapi-cryptprotectdata
+
+https://learn.microsoft.com/en-us/windows/win32/api/dpapi/nf-dpapi-cryptprotectdata
+
+22 https://docs.pytest.org/en/stable/getting-started.html
+
+https://docs.pytest.org/en/stable/getting-started.html
+
+                                                                           20
+23 https://docs.python.org/3/library/asyncio.html
+
+https://docs.python.org/3/library/asyncio.html
+
+24 https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-
+iuiautomation-addstructurechangedeventhandler
+
+https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nf-uiautomationclient-iuiautomation-
+addstructurechangedeventhandler
+
+25 https://pyautogui.readthedocs.io/en/latest/quickstart.html
+
+https://pyautogui.readthedocs.io/en/latest/quickstart.html
+
+26 https://developer.apple.com/library/archive/documentation/LanguagesUtilities/Conceptual/
+MacAutomationScriptingGuide/AutomatetheUserInterface.html
+
+https://developer.apple.com/library/archive/documentation/LanguagesUtilities/Conceptual/MacAutomationScriptingGuide/
+AutomatetheUserInterface.html
+
+27 https://developer.gnome.org/documentation/guidelines/accessibility.html
+
+https://developer.gnome.org/documentation/guidelines/accessibility.html
+
+29 https://playwright.dev/python/docs/api/class-browsercontext
+
+https://playwright.dev/python/docs/api/class-browsercontext
+
+31 45 49 https://docs.opencv.org/3.4/d7/d4d/tutorial_py_thresholding.html
+
+https://docs.opencv.org/3.4/d7/d4d/tutorial_py_thresholding.html
+
+32 https://docs.opencv.org/4.x/d4/d73/tutorial_py_contours_begin.html
+
+https://docs.opencv.org/4.x/d4/d73/tutorial_py_contours_begin.html
+
+34 42 https://docs.python.org/3/library/tkinter.html
+
+https://docs.python.org/3/library/tkinter.html
+
+36 48 https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-eventsforclients
+
+https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-eventsforclients
+
+41 https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nn-uiautomationclient-
+iuiautomationstructurechangedeventhandler
+
+https://learn.microsoft.com/en-us/windows/win32/api/uiautomationclient/nn-uiautomationclient-
+iuiautomationstructurechangedeventhandler
+
+46 https://playwright.dev/docs/browser-contexts
+
+https://playwright.dev/docs/browser-contexts
+
+                                                                           21
+

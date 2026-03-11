@@ -1,0 +1,47 @@
+﻿{
+  "id": "open_workspace",
+  "version": "1.0.0",
+  "inputs": {
+    "workspace_url": "https://intranet.example.local/workspace",
+    "workspace_folder": "data/evidence/exports"
+  },
+  "steps": [
+    {
+      "step_id": "goto_workspace",
+      "action": {
+        "type": "browser.goto",
+        "args": {"url": "{workspace_url}"},
+        "on_fail": {"strategy": "abort"}
+      },
+      "validate": [
+        {
+          "kind": "browser.url_matches",
+          "args": {"pattern": "^https://intranet\\.example\\.local/.+"},
+          "on_fail": {"strategy": "abort"}
+        }
+      ]
+    },
+    {
+      "step_id": "open_workspace_folder",
+      "action": {
+        "type": "desktop.open_path",
+        "args": {"path": "{workspace_folder}"},
+        "on_fail": {"strategy": "abort"}
+      },
+      "validate": [
+        {
+          "kind": "files.exists",
+          "args": {"path": "{workspace_folder}"},
+          "on_fail": {"strategy": "abort"}
+        }
+      ]
+    }
+  ],
+  "success_criteria": [
+    {
+      "kind": "files.exists",
+      "args": {"path": "{workspace_folder}"},
+      "on_fail": {"strategy": "abort"}
+    }
+  ]
+}

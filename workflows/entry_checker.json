@@ -1,0 +1,46 @@
+﻿{
+  "id": "entry_checker",
+  "version": "1.0.0",
+  "inputs": {
+    "target_window": "Entry Manager"
+  },
+  "steps": [
+    {
+      "step_id": "focus_entry_window",
+      "action": {
+        "type": "desktop.focus_window",
+        "args": {"window_title": "{target_window}"},
+        "on_fail": {"strategy": "abort"}
+      },
+      "validate": [
+        {
+          "kind": "ui.control_exists",
+          "args": {"control": "EntriesGrid"},
+          "on_fail": {"strategy": "abort"}
+        }
+      ]
+    },
+    {
+      "step_id": "inspect_entries",
+      "action": {
+        "type": "desktop.inspect_entries",
+        "args": {"required_fields": ["amount", "reference"]},
+        "on_fail": {"strategy": "abort"}
+      },
+      "validate": [
+        {
+          "kind": "data.regex_match",
+          "args": {"pattern": "^0$", "value": "{exception_count}"},
+          "on_fail": {"strategy": "abort"}
+        }
+      ]
+    }
+  ],
+  "success_criteria": [
+    {
+      "kind": "data.regex_match",
+      "args": {"pattern": "^0$", "value": "{exception_count}"},
+      "on_fail": {"strategy": "abort"}
+    }
+  ]
+}

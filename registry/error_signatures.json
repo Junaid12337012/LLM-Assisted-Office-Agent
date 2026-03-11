@@ -1,0 +1,51 @@
+﻿{
+  "error_signatures": [
+    {
+      "id": "popup_session_expired",
+      "match": {
+        "type": "ui.text_contains",
+        "value": "Session expired"
+      },
+      "scope": {
+        "domain": "reports.example.local"
+      },
+      "severity": "medium",
+      "recovery_plan": [
+        {"type": "browser.reload", "args": {}},
+        {"type": "workflow.goto_step", "args": {"step_id": "goto_reports_portal"}}
+      ]
+    },
+    {
+      "id": "temporary_upload_error",
+      "match": {
+        "type": "ui.text_contains",
+        "value": "Temporary upload error"
+      },
+      "scope": {
+        "domain": "upload.example.local"
+      },
+      "severity": "medium",
+      "recovery_plan": [
+        {"type": "browser.reload", "args": {}},
+        {"type": "workflow.goto_step", "args": {"step_id": "goto_upload_page"}}
+      ]
+    },
+    {
+      "id": "file_locked",
+      "match": {
+        "type": "ui.text_regex",
+        "value": "file.*locked"
+      },
+      "scope": {
+        "app": "Entry Manager"
+      },
+      "severity": "high",
+      "recovery_plan": [
+        {
+          "type": "escalate.user_confirm",
+          "args": {"message": "Close the locked file, then confirm to resume."}
+        }
+      ]
+    }
+  ]
+}

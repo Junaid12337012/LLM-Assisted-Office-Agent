@@ -1,0 +1,86 @@
+﻿{
+  "id": "daily_download_and_rename",
+  "version": "1.0.0",
+  "inputs": {
+    "portal_url": "https://reports.example.local/daily",
+    "download_file_name": "daily_report.csv",
+    "download_dir": "data/evidence/exports",
+    "export_dir": "data/evidence/exports"
+  },
+  "steps": [
+    {
+      "step_id": "goto_reports_portal",
+      "action": {
+        "type": "browser.goto",
+        "args": {"url": "{portal_url}"},
+        "on_fail": {"strategy": "recover", "recover_with": "popup_session_expired"}
+      },
+      "validate": [
+        {
+          "kind": "browser.url_matches",
+          "args": {"pattern": "^https://reports\\.example\\.local/.+"},
+          "on_fail": {"strategy": "abort"}
+        }
+      ]
+    },
+    {
+      "step_id": "request_report",
+      "action": {
+        "type": "browser.click",
+        "args": {"selector": "#daily-report"},
+        "on_fail": {"strategy": "abort"}
+      },
+      "validate": [
+        {
+          "kind": "ui.has_text",
+          "args": {"text": "Daily report ready"},
+          "on_fail": {"strategy": "abort"}
+        }
+      ]
+    },
+    {
+      "step_id": "download_report",
+      "action": {
+        "type": "browser.download",
+        "args": {
+          "download_dir": "{download_dir}",
+          "file_name": "{download_file_name}"
+        },
+        "retry": {"max_attempts": 1, "backoff_ms": 100},
+        "on_fail": {"strategy": "abort"}
+      },
+      "validate": [
+        {
+          "kind": "files.exists",
+          "args": {"path": "{download_path}"},
+          "on_fail": {"strategy": "abort"}
+        }
+      ]
+    },
+    {
+      "step_id": "move_report",
+      "action": {
+        "type": "files.move",
+        "args": {
+          "source": "{download_path}",
+          "destination": "{export_dir}/daily_report_{run_date}.csv"
+        },
+        "on_fail": {"strategy": "abort"}
+      },
+      "validate": [
+        {
+          "kind": "files.exists",
+          "args": {"path": "{destination_path}"},
+          "on_fail": {"strategy": "abort"}
+        }
+      ]
+    }
+  ],
+  "success_criteria": [
+    {
+      "kind": "files.exists",
+      "args": {"path": "{destination_path}"},
+      "on_fail": {"strategy": "abort"}
+    }
+  ]
+}

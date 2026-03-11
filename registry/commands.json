@@ -1,0 +1,160 @@
+﻿{
+  "commands": [
+    {
+      "name": "mvp.start_day",
+      "description": "Create a dated work note, open the workspace page, and open your exports folder.",
+      "workflow_id": "mvp_start_day",
+      "parameters": [
+        {"name": "run_date", "type": "date", "required": true},
+        {"name": "note_path", "type": "path", "required": false}
+      ],
+      "risk": "low",
+      "allowed_targets": {
+        "apps": [],
+        "domains": ["intranet.example.local"]
+      },
+      "requires_confirmation": false
+    },
+    {
+      "name": "mvp.note",
+      "description": "Write a quick note and open it in Notepad.",
+      "workflow_id": "quick_note",
+      "parameters": [
+        {"name": "run_date", "type": "date", "required": true},
+        {"name": "note_text", "type": "string", "required": true},
+        {"name": "note_title", "type": "string", "required": false},
+        {"name": "note_path", "type": "path", "required": false}
+      ],
+      "risk": "low",
+      "allowed_targets": {
+        "apps": [],
+        "domains": []
+      },
+      "requires_confirmation": false
+    },
+    {
+      "name": "mvp.download_report",
+      "description": "Download the sample daily report into the local exports folder.",
+      "workflow_id": "daily_download_and_rename",
+      "parameters": [
+        {"name": "run_date", "type": "date", "required": true},
+        {"name": "download_dir", "type": "path", "required": false},
+        {"name": "export_dir", "type": "path", "required": false}
+      ],
+      "risk": "low",
+      "allowed_targets": {
+        "apps": [],
+        "domains": ["reports.example.local"]
+      },
+      "requires_confirmation": false
+    },
+    {
+      "name": "mvp.end_day",
+      "description": "Export an end-of-day summary and open it in Notepad.",
+      "workflow_id": "mvp_end_day",
+      "parameters": [
+        {"name": "run_date", "type": "date", "required": true},
+        {"name": "summary_output", "type": "path", "required": false}
+      ],
+      "risk": "low",
+      "allowed_targets": {
+        "apps": [],
+        "domains": []
+      },
+      "requires_confirmation": false
+    },
+    {
+      "name": "workspace.open_all",
+      "description": "Open the workspace browser page and the local exports folder.",
+      "workflow_id": "open_workspace",
+      "parameters": [],
+      "risk": "low",
+      "allowed_targets": {
+        "apps": [],
+        "domains": ["intranet.example.local"]
+      },
+      "requires_confirmation": false
+    },
+    {
+      "name": "desktop.demo_notepad",
+      "description": "Create a demo note and open it in Notepad so you can test desktop execution.",
+      "workflow_id": "demo_notepad",
+      "parameters": [],
+      "risk": "low",
+      "allowed_targets": {
+        "apps": [],
+        "domains": []
+      },
+      "requires_confirmation": false
+    },
+    {
+      "name": "desktop.demo_paint",
+      "description": "Launch Paint as a clean built-in Windows app test.",
+      "workflow_id": "demo_paint",
+      "parameters": [],
+      "risk": "low",
+      "allowed_targets": {
+        "apps": [],
+        "domains": []
+      },
+      "requires_confirmation": false
+    },
+    {
+      "name": "browser.download_daily_report",
+      "description": "Download the daily report and move it to the export directory.",
+      "workflow_id": "daily_download_and_rename",
+      "parameters": [
+        {"name": "download_dir", "type": "path", "required": true},
+        {"name": "export_dir", "type": "path", "required": true},
+        {"name": "run_date", "type": "date", "required": true}
+      ],
+      "risk": "low",
+      "allowed_targets": {
+        "apps": [],
+        "domains": ["reports.example.local"]
+      },
+      "requires_confirmation": false
+    },
+    {
+      "name": "portal.upload_latest_file",
+      "description": "Find the latest export file and submit it to the upload portal.",
+      "workflow_id": "portal_upload",
+      "parameters": [
+        {"name": "source_dir", "type": "path", "required": true}
+      ],
+      "risk": "high",
+      "allowed_targets": {
+        "apps": [],
+        "domains": ["upload.example.local"]
+      },
+      "requires_confirmation": true
+    },
+    {
+      "name": "desktop.check_entries",
+      "description": "Inspect entries in the desktop application and count exceptions.",
+      "workflow_id": "entry_checker",
+      "parameters": [],
+      "risk": "medium",
+      "allowed_targets": {
+        "apps": ["Entry Manager"],
+        "domains": []
+      },
+      "requires_confirmation": false
+    },
+    {
+      "name": "reports.end_of_day_summary",
+      "description": "Export a summary of the day's workflow runs from SQLite.",
+      "workflow_id": "end_of_day_report",
+      "parameters": [
+        {"name": "run_date", "type": "date", "required": true},
+        {"name": "export_path", "type": "path", "required": true}
+      ],
+      "risk": "low",
+      "allowed_targets": {
+        "apps": [],
+        "domains": []
+      },
+      "requires_confirmation": false
+    }
+  ]
+}

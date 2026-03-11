@@ -1,0 +1,84 @@
+﻿{
+  "id": "portal_upload",
+  "version": "1.0.0",
+  "inputs": {
+    "upload_url": "https://upload.example.local/portal",
+    "file_pattern": "*.csv"
+  },
+  "steps": [
+    {
+      "step_id": "find_latest_export",
+      "action": {
+        "type": "files.find_latest",
+        "args": {
+          "directory": "{source_dir}",
+          "pattern": "{file_pattern}"
+        },
+        "on_fail": {"strategy": "abort"}
+      },
+      "validate": [
+        {
+          "kind": "files.exists",
+          "args": {"path": "{latest_file}"},
+          "on_fail": {"strategy": "abort"}
+        }
+      ]
+    },
+    {
+      "step_id": "goto_upload_page",
+      "action": {
+        "type": "browser.goto",
+        "args": {"url": "{upload_url}"},
+        "on_fail": {"strategy": "recover", "recover_with": "temporary_upload_error"}
+      },
+      "validate": [
+        {
+          "kind": "browser.url_matches",
+          "args": {"pattern": "^https://upload\\.example\\.local/.+"},
+          "on_fail": {"strategy": "abort"}
+        }
+      ]
+    },
+    {
+      "step_id": "attach_upload_file",
+      "action": {
+        "type": "browser.upload_file",
+        "args": {
+          "selector": "#upload-input",
+          "file_path": "{latest_file}"
+        },
+        "on_fail": {"strategy": "abort"}
+      },
+      "validate": [
+        {
+          "kind": "ui.has_text",
+          "args": {"text": "Upload ready"},
+          "on_fail": {"strategy": "abort"}
+        }
+      ]
+    },
+    {
+      "step_id": "submit_upload",
+      "action": {
+        "type": "browser.click",
+        "args": {"selector": "#submit-upload"},
+        "risk": "high",
+        "on_fail": {"strategy": "recover", "recover_with": "temporary_upload_error"}
+      },
+      "validate": [
+        {
+          "kind": "ui.has_text",
+          "args": {"text": "Upload successful"},
+          "on_fail": {"strategy": "abort"}
+        }
+      ]
+    }
+  ],
+  "success_criteria": [
+    {
+      "kind": "ui.has_text",
+      "args": {"text": "Upload successful"},
+      "on_fail": {"strategy": "abort"}
+    }
+  ]
+}

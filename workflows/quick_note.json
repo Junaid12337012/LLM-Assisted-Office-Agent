@@ -1,0 +1,50 @@
+﻿{
+  "id": "quick_note",
+  "version": "1.0.0",
+  "inputs": {
+    "note_title": "Quick Note",
+    "note_path": "data/evidence/notes/quick_note.txt"
+  },
+  "steps": [
+    {
+      "step_id": "write_note",
+      "action": {
+        "type": "files.write_text",
+        "args": {
+          "path": "{note_path}",
+          "content": "{note_title}\nDate: {run_date}\n\n{note_text}\n"
+        },
+        "on_fail": {"strategy": "abort"}
+      },
+      "validate": [
+        {
+          "kind": "files.exists",
+          "args": {"path": "{written_path}"},
+          "on_fail": {"strategy": "abort"}
+        }
+      ]
+    },
+    {
+      "step_id": "open_note",
+      "action": {
+        "type": "desktop.launch_app",
+        "args": {"command": "notepad.exe \"{note_path}\""},
+        "on_fail": {"strategy": "abort"}
+      },
+      "validate": [
+        {
+          "kind": "files.exists",
+          "args": {"path": "{note_path}"},
+          "on_fail": {"strategy": "abort"}
+        }
+      ]
+    }
+  ],
+  "success_criteria": [
+    {
+      "kind": "files.exists",
+      "args": {"path": "{note_path}"},
+      "on_fail": {"strategy": "abort"}
+    }
+  ]
+}

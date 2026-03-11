@@ -1,0 +1,34 @@
+﻿{
+  "id": "demo_paint",
+  "version": "1.0.0",
+  "inputs": {
+    "paint_command": "mspaint.exe",
+    "paint_path": "C:/Windows/System32/mspaint.exe"
+  },
+  "steps": [
+    {
+      "step_id": "launch_paint",
+      "action": {
+        "type": "desktop.launch_app",
+        "args": {
+          "command": "{paint_command}"
+        },
+        "on_fail": {"strategy": "abort"}
+      },
+      "validate": [
+        {
+          "kind": "files.exists",
+          "args": {"path": "{paint_path}"},
+          "on_fail": {"strategy": "abort"}
+        }
+      ]
+    }
+  ],
+  "success_criteria": [
+    {
+      "kind": "files.exists",
+      "args": {"path": "{paint_path}"},
+      "on_fail": {"strategy": "abort"}
+    }
+  ]
+}

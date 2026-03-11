@@ -1,0 +1,10 @@
+﻿{
+  "allowed_apps": ["Entry Manager", "Report Viewer"],
+  "allowed_domains": [
+    "intranet.example.local",
+    "reports.example.local",
+    "upload.example.local"
+  ],
+  "default_confirm_risks": ["high"],
+  "safe_mode_confirm_risks": ["medium", "high"]
+}
