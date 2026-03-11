@@ -1,0 +1,5 @@
+invoice_id=INV-4242
+ocr_text=﻿INV-4242
+ocr_confidence=0.95
+parsed_confidence=0.95
+source_image=D:\Dev\LLM-Assisted-Office-Agent\data\evidence\review\invoice_input.txt

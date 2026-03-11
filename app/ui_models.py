@@ -12,6 +12,10 @@ class RuntimeServices:
     workflows: Any
     engine: Any
     memory_store: Any
+    review_queue: Any | None = None
+    assistant: Any | None = None
+    operator_session_manager: Any | None = None
+    operator_exception_queue: Any | None = None
 
 
 @dataclass(slots=True)

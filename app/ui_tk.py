@@ -17,6 +17,7 @@ from core.logging_setup import setup_logging
 from core.memory import MemoryStore
 from core.observer import Observer
 from core.recovery import ErrorSignatureRegistry, RecoveryEngine
+from core.review_queue import ReviewQueue
 from core.safety import SafetyGate
 from core.validator import Validator
 from core.workflow_engine import WorkflowEngine, WorkflowRepository
@@ -46,6 +47,7 @@ class OfficeAgentTkApp:
         logger = setup_logging()
         data_dir = base_dir / "data"
         memory_store = MemoryStore(data_dir / "memory.db")
+        review_queue = ReviewQueue(memory_store)
         desktop_controller = WindowsDesktopController(dry_run=True)
         browser_controller = PlaywrightBrowserController(
             dry_run=True,
@@ -84,9 +86,10 @@ class OfficeAgentTkApp:
             recovery_engine,
             safety_gate,
             memory_store,
+            review_queue,
             logger,
         )
-        return RuntimeServices(base_dir, registry, workflows, engine, memory_store)
+        return RuntimeServices(base_dir, registry, workflows, engine, memory_store, review_queue)
 
     def _build_layout(self) -> None:
         container = ttk.Frame(self.root, padding=16)

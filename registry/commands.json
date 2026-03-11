@@ -155,6 +155,21 @@
         "domains": []
       },
       "requires_confirmation": false
+    },
+    {
+      "name": "phase2.read_invoice_id",
+      "description": "Crop a known invoice area, OCR it, validate the ID, and queue low-confidence cases for review.",
+      "workflow_id": "phase2_read_invoice_id",
+      "parameters": [
+        {"name": "image_path", "type": "path", "required": true},
+        {"name": "result_path", "type": "path", "required": false}
+      ],
+      "risk": "low",
+      "allowed_targets": {
+        "apps": [],
+        "domains": []
+      },
+      "requires_confirmation": false
     }
   ]
 }

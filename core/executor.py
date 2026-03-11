@@ -4,6 +4,10 @@ import json
 from pathlib import Path
 from typing import Any
 
+from image_pipeline.confidence import combine_confidence
+from image_pipeline.cropper import crop_fixed_region
+from image_pipeline.parser import extract_regex_value
+from image_pipeline.preprocess import normalize_for_ocr
 from core.models import ActionDefinition, ActionResult
 from core.utils import render_template
 
@@ -50,6 +54,36 @@ class Executor:
 
         if action.type == "vision.ocr_region" and self.vision_ocr_controller is not None:
             return self.vision_ocr_controller.perform(action.type, args)
+
+        if action.type == "image.crop_region":
+            image_path = Path(str(args.get("image_path") or ""))
+            output_path = Path(str(args.get("output_path") or ""))
+            if not image_path.exists():
+                return ActionResult(False, f"Image does not exist: {image_path}")
+            data = crop_fixed_region(image_path, output_path)
+            return ActionResult(True, f"Cropped image to {data['cropped_path']}.", data=data)
+
+        if action.type == "image.preprocess_for_ocr":
+            image_path = Path(str(args.get("image_path") or ""))
+            output_path = Path(str(args.get("output_path") or ""))
+            if not image_path.exists():
+                return ActionResult(False, f"Image does not exist: {image_path}")
+            data = normalize_for_ocr(image_path, output_path)
+            return ActionResult(True, f"Prepared OCR image {data['preprocessed_path']}.", data=data)
+
+        if action.type == "image.parse_regex":
+            text = str(args.get("text") or "")
+            pattern = str(args.get("pattern") or "")
+            field_name = str(args.get("field_name") or "parsed_value")
+            parsed = extract_regex_value(text, pattern, field_name)
+            matched = bool(parsed.get(field_name))
+            confidence = combine_confidence(float(args.get("ocr_confidence") or 0.95), matched)
+            return ActionResult(
+                matched,
+                f"Parsed field '{field_name}'.",
+                data={**parsed, "parsed_confidence": confidence},
+                observations={"parsed_field": field_name, "matched": matched},
+            )
 
         if action.type == "reports.export_summary":
             run_date = str(args.get("run_date") or "")

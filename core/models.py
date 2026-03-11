@@ -113,6 +113,8 @@ class RecoveryResult:
     goto_step: str | None = None
     stop_run: bool = False
     message: str = ""
+    review_item_id: int | None = None
+    evidence_path: str | None = None
 
 
 @dataclass(slots=True)

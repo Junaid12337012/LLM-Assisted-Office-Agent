@@ -115,6 +115,132 @@ def _serialize_run_payload(services: Any, outcome: Any) -> dict[str, Any]:
     }
 
 
+def _serialize_plan(plan: Any) -> dict[str, Any]:
+    return plan.to_dict() if hasattr(plan, "to_dict") else dict(plan)
+
+
+def _assistant_outcome(
+    status: str,
+    summary: dict[str, Any] | None = None,
+    *,
+    last_error: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "status": status,
+        "summary": summary or {},
+        "last_error": last_error,
+    }
+
+
+def _serialize_session_payload(details: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "session": details["session"],
+        "tasks": details["tasks"],
+        "exceptions": details["exceptions"],
+        "checkpoints": details.get("checkpoints", []),
+        "summary": details["summary"],
+        "summary_text": details["summary_text"],
+    }
+
+
+def _manual_session_tasks(services: Any, raw_commands: list[str]) -> list[dict[str, Any]]:
+    tasks: list[dict[str, Any]] = []
+    for index, raw_command in enumerate(raw_commands, start=1):
+        command, inputs = services.registry.parse_invocation(raw_command)
+        tasks.append(
+            {
+                "title": f"Task {index}: {command.name}",
+                "command_name": command.name,
+                "workflow_id": command.workflow_id,
+                "inputs": inputs,
+                "priority": "normal",
+                "max_retries": 1,
+                "requires_confirmation": command.requires_confirmation,
+            }
+        )
+    return tasks
+
+
+def execute_assistant_plan(
+    services: Any,
+    plan: Any,
+    *,
+    safe_mode: bool = False,
+    confirm_risky: bool = False,
+    confirm_plan: bool = False,
+) -> dict[str, Any]:
+    if plan.status == "unmatched":
+        return {
+            "plan": _serialize_plan(plan),
+            "outcome": _assistant_outcome(
+                "unmatched",
+                {"message": plan.explanation},
+                last_error=plan.explanation,
+            ),
+            "runs": [],
+        }
+
+    if plan.status == "needs_clarification":
+        return {
+            "plan": _serialize_plan(plan),
+            "outcome": _assistant_outcome(
+                "needs_clarification",
+                {"missing_parameters": plan.missing_parameters, "warnings": plan.warnings},
+                last_error=plan.explanation,
+            ),
+            "runs": [],
+        }
+
+    if plan.status == "needs_confirmation" and not confirm_plan:
+        return {
+            "plan": _serialize_plan(plan),
+            "outcome": _assistant_outcome(
+                "needs_confirmation",
+                {"warnings": plan.warnings, "message": plan.explanation},
+                last_error=plan.explanation,
+            ),
+            "runs": [],
+        }
+
+    run_payloads: list[dict[str, Any]] = []
+    aggregate_status = "completed"
+    completed_commands = 0
+    last_error: str | None = None
+    confirmation_handler = (lambda _message: True) if (confirm_risky or confirm_plan) else None
+
+    for planned_command in plan.commands:
+        command, inputs = services.registry.parse_invocation(planned_command.raw_command)
+        outcome = services.engine.run(
+            command,
+            inputs,
+            safe_mode=safe_mode,
+            confirmation_handler=confirmation_handler,
+        )
+        payload = _serialize_run_payload(services, outcome)
+        run_payloads.append(payload)
+        if outcome.status in {"completed", "stopped"}:
+            completed_commands += 1
+            continue
+        aggregate_status = "failed" if completed_commands == 0 else "partial"
+        last_error = outcome.last_error or f"{planned_command.command_name} ended with {outcome.status}."
+        break
+
+    return {
+        "plan": _serialize_plan(plan),
+        "outcome": _assistant_outcome(
+            aggregate_status,
+            {
+                "planned_commands": [command.raw_command for command in plan.commands],
+                "completed_commands": completed_commands,
+                "total_commands": len(plan.commands),
+                "warnings": plan.warnings,
+            },
+            last_error=last_error,
+        ),
+        "runs": run_payloads,
+    }
+
+
 def command_list(_args: argparse.Namespace) -> dict[str, Any]:
     services = build_services()
     return {
@@ -149,6 +275,28 @@ def command_dashboard(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def command_review_list(args: argparse.Namespace) -> dict[str, Any]:
+    services = build_services()
+    return {
+        "items": services.review_queue.list_items(status=args.status, limit=args.limit) if services.review_queue else [],
+    }
+
+
+def command_review_resolve(args: argparse.Namespace) -> dict[str, Any]:
+    services = build_services()
+    if services.review_queue is None:
+        raise SystemExit("Review queue is not available.")
+    item = services.review_queue.resolve(
+        review_id=args.review_id,
+        resolution=args.resolution,
+        corrected_value=args.corrected_value,
+        notes=args.notes,
+    )
+    if item is None:
+        raise SystemExit(f"Review item {args.review_id} was not found.")
+    return {"item": item}
+
+
 def command_run(args: argparse.Namespace) -> dict[str, Any]:
     services = build_services()
     command, inputs = services.registry.parse_invocation(args.raw_command)
@@ -159,6 +307,142 @@ def command_run(args: argparse.Namespace) -> dict[str, Any]:
         confirmation_handler=(lambda _message: True) if args.confirm_risky else None,
     )
     return _serialize_run_payload(services, outcome)
+
+
+def command_plan_instruction(args: argparse.Namespace) -> dict[str, Any]:
+    services = build_services()
+    if services.assistant is None:
+        raise SystemExit("Assistant planner is not available.")
+    plan = services.assistant.plan(args.instruction)
+    return {"plan": _serialize_plan(plan)}
+
+
+def command_run_instruction(args: argparse.Namespace) -> dict[str, Any]:
+    services = build_services()
+    if services.assistant is None:
+        raise SystemExit("Assistant planner is not available.")
+    plan = services.assistant.plan(args.instruction)
+    return execute_assistant_plan(
+        services,
+        plan,
+        safe_mode=args.safe_mode,
+        confirm_risky=args.confirm_risky,
+        confirm_plan=args.confirm_plan,
+    )
+
+
+def command_operator_dashboard(args: argparse.Namespace) -> dict[str, Any]:
+    services = build_services()
+    if services.operator_session_manager is None:
+        raise SystemExit("Operator session manager is not available.")
+    return {"dashboard": services.operator_session_manager.dashboard(limit=args.limit)}
+
+
+def command_operator_list_sessions(args: argparse.Namespace) -> dict[str, Any]:
+    services = build_services()
+    if services.operator_session_manager is None:
+        raise SystemExit("Operator session manager is not available.")
+    return {
+        "sessions": services.operator_session_manager.list_sessions(limit=args.limit, status=args.status)
+    }
+
+
+def command_operator_create_session(args: argparse.Namespace) -> dict[str, Any]:
+    services = build_services()
+    if services.operator_session_manager is None:
+        raise SystemExit("Operator session manager is not available.")
+    if args.instruction:
+        details = services.operator_session_manager.create_session_from_instruction(
+            args.instruction,
+            session_name=args.name,
+        )
+        return {
+            "session": details["session"],
+            "tasks": details["tasks"],
+            "exceptions": details["exceptions"],
+            "plan": details.get("plan"),
+        }
+    if args.raw_command:
+        tasks = _manual_session_tasks(services, args.raw_command)
+        details = services.operator_session_manager.create_session(
+            args.name or "Manual operator session",
+            tasks,
+            source="manual",
+            metadata={"raw_commands": args.raw_command},
+        )
+        return _serialize_session_payload(details)
+    raise SystemExit("Provide --instruction or at least one --raw-command.")
+
+
+def command_operator_session_details(args: argparse.Namespace) -> dict[str, Any]:
+    services = build_services()
+    if services.operator_session_manager is None:
+        raise SystemExit("Operator session manager is not available.")
+    return _serialize_session_payload(
+        services.operator_session_manager.get_session_details(args.session_id)
+    )
+
+
+def command_operator_run_next(args: argparse.Namespace) -> dict[str, Any]:
+    services = build_services()
+    if services.operator_session_manager is None:
+        raise SystemExit("Operator session manager is not available.")
+    return {
+        "result": services.operator_session_manager.run_next_task(
+            args.session_id,
+            safe_mode=args.safe_mode,
+            confirm_risky=args.confirm_risky,
+            confirm_plan=args.confirm_plan,
+        )
+    }
+
+
+def command_operator_run_session(args: argparse.Namespace) -> dict[str, Any]:
+    services = build_services()
+    if services.operator_session_manager is None:
+        raise SystemExit("Operator session manager is not available.")
+    details = services.operator_session_manager.run_session(
+        args.session_id,
+        safe_mode=args.safe_mode,
+        confirm_risky=args.confirm_risky,
+        confirm_plan=args.confirm_plan,
+        max_tasks=args.max_tasks,
+    )
+    payload = _serialize_session_payload(details)
+    payload["executions"] = details["executions"]
+    return payload
+
+
+def command_operator_pause_session(args: argparse.Namespace) -> dict[str, Any]:
+    services = build_services()
+    if services.operator_session_manager is None:
+        raise SystemExit("Operator session manager is not available.")
+    return _serialize_session_payload(services.operator_session_manager.pause_session(args.session_id))
+
+
+def command_operator_list_exceptions(args: argparse.Namespace) -> dict[str, Any]:
+    services = build_services()
+    if services.operator_exception_queue is None:
+        raise SystemExit("Operator exception queue is not available.")
+    return {
+        "exceptions": services.operator_exception_queue.list(
+            session_id=args.session_id,
+            status=args.status,
+            limit=args.limit,
+        )
+    }
+
+
+def command_operator_resolve_exception(args: argparse.Namespace) -> dict[str, Any]:
+    services = build_services()
+    if services.operator_session_manager is None:
+        raise SystemExit("Operator session manager is not available.")
+    item = services.operator_session_manager.resolve_exception(
+        args.exception_id,
+        resolution=args.resolution,
+        notes=args.notes,
+    )
+    return {"exception": item}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -178,6 +462,18 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard_parser.add_argument("--limit", type=int, default=30)
     dashboard_parser.set_defaults(handler=command_dashboard)
 
+    review_list_parser = subparsers.add_parser("list-review-items", help="List pending or resolved review items.")
+    review_list_parser.add_argument("--status", default="pending")
+    review_list_parser.add_argument("--limit", type=int, default=50)
+    review_list_parser.set_defaults(handler=command_review_list)
+
+    review_resolve_parser = subparsers.add_parser("resolve-review-item", help="Resolve a review queue item.")
+    review_resolve_parser.add_argument("--review-id", type=int, required=True)
+    review_resolve_parser.add_argument("--resolution", required=True)
+    review_resolve_parser.add_argument("--corrected-value", default=None)
+    review_resolve_parser.add_argument("--notes", default="")
+    review_resolve_parser.set_defaults(handler=command_review_resolve)
+
     run_details_parser = subparsers.add_parser("run-details", help="Show details for a specific run.")
     run_details_parser.add_argument("--run-id", type=int, required=True)
     run_details_parser.set_defaults(handler=command_run_details)
@@ -187,6 +483,67 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--safe-mode", action="store_true")
     run_parser.add_argument("--confirm-risky", action="store_true")
     run_parser.set_defaults(handler=command_run)
+
+    plan_parser = subparsers.add_parser("plan-instruction", help="Map a natural-language instruction to safe workflow commands.")
+    plan_parser.add_argument("--instruction", required=True)
+    plan_parser.set_defaults(handler=command_plan_instruction)
+
+    run_instruction_parser = subparsers.add_parser("run-instruction", help="Plan and run a natural-language instruction safely.")
+    run_instruction_parser.add_argument("--instruction", required=True)
+    run_instruction_parser.add_argument("--safe-mode", action="store_true")
+    run_instruction_parser.add_argument("--confirm-risky", action="store_true")
+    run_instruction_parser.add_argument("--confirm-plan", action="store_true")
+    run_instruction_parser.set_defaults(handler=command_run_instruction)
+
+    operator_dashboard_parser = subparsers.add_parser("operator-dashboard", help="Return operator-mode dashboard data.")
+    operator_dashboard_parser.add_argument("--limit", type=int, default=10)
+    operator_dashboard_parser.set_defaults(handler=command_operator_dashboard)
+
+    operator_sessions_parser = subparsers.add_parser("operator-list-sessions", help="List operator sessions.")
+    operator_sessions_parser.add_argument("--status", default="all")
+    operator_sessions_parser.add_argument("--limit", type=int, default=25)
+    operator_sessions_parser.set_defaults(handler=command_operator_list_sessions)
+
+    operator_create_parser = subparsers.add_parser("operator-create-session", help="Create an operator session from an instruction or manual commands.")
+    operator_create_parser.add_argument("--name", default="")
+    operator_create_parser.add_argument("--instruction", default="")
+    operator_create_parser.add_argument("--raw-command", action="append", default=[])
+    operator_create_parser.set_defaults(handler=command_operator_create_session)
+
+    operator_details_parser = subparsers.add_parser("operator-session-details", help="Show details for one operator session.")
+    operator_details_parser.add_argument("--session-id", type=int, required=True)
+    operator_details_parser.set_defaults(handler=command_operator_session_details)
+
+    operator_run_next_parser = subparsers.add_parser("operator-run-next", help="Run the next queued task in an operator session.")
+    operator_run_next_parser.add_argument("--session-id", type=int, required=True)
+    operator_run_next_parser.add_argument("--safe-mode", action="store_true")
+    operator_run_next_parser.add_argument("--confirm-risky", action="store_true")
+    operator_run_next_parser.add_argument("--confirm-plan", action="store_true")
+    operator_run_next_parser.set_defaults(handler=command_operator_run_next)
+
+    operator_run_session_parser = subparsers.add_parser("operator-run-session", help="Process pending tasks in an operator session.")
+    operator_run_session_parser.add_argument("--session-id", type=int, required=True)
+    operator_run_session_parser.add_argument("--safe-mode", action="store_true")
+    operator_run_session_parser.add_argument("--confirm-risky", action="store_true")
+    operator_run_session_parser.add_argument("--confirm-plan", action="store_true")
+    operator_run_session_parser.add_argument("--max-tasks", type=int, default=None)
+    operator_run_session_parser.set_defaults(handler=command_operator_run_session)
+
+    operator_pause_parser = subparsers.add_parser("operator-pause-session", help="Pause an operator session between tasks.")
+    operator_pause_parser.add_argument("--session-id", type=int, required=True)
+    operator_pause_parser.set_defaults(handler=command_operator_pause_session)
+
+    operator_exceptions_parser = subparsers.add_parser("operator-list-exceptions", help="List operator exceptions.")
+    operator_exceptions_parser.add_argument("--session-id", type=int, default=None)
+    operator_exceptions_parser.add_argument("--status", default="open")
+    operator_exceptions_parser.add_argument("--limit", type=int, default=50)
+    operator_exceptions_parser.set_defaults(handler=command_operator_list_exceptions)
+
+    operator_resolve_parser = subparsers.add_parser("operator-resolve-exception", help="Resolve an operator exception.")
+    operator_resolve_parser.add_argument("--exception-id", type=int, required=True)
+    operator_resolve_parser.add_argument("--resolution", required=True)
+    operator_resolve_parser.add_argument("--notes", default="")
+    operator_resolve_parser.set_defaults(handler=command_operator_resolve_exception)
 
     return parser
 

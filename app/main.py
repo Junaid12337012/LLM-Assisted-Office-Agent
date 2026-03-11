@@ -1,24 +1,57 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
 
 from app.runtime import build_services
-
+from core.models import ConfigurationError
 
 
 def run_cli(raw_command: str, safe_mode: bool = False) -> int:
     services = build_services()
-    command, inputs = services.registry.parse_invocation(raw_command)
-    outcome = services.engine.run(
-        command,
-        inputs,
-        safe_mode=safe_mode,
-        confirmation_handler=lambda _message: True,
-    )
-    print(f"status={outcome.status}")
-    print(f"summary={outcome.summary}")
-    return 0 if outcome.status in {"completed", "stopped"} else 1
+    try:
+        command, inputs = services.registry.parse_invocation(raw_command)
+        outcome = services.engine.run(
+            command,
+            inputs,
+            safe_mode=safe_mode,
+            confirmation_handler=lambda _message: True,
+        )
+        print(f"status={outcome.status}")
+        print(f"summary={outcome.summary}")
+        return 0 if outcome.status in {"completed", "stopped"} else 1
+    except ConfigurationError:
+        if services.assistant is None:
+            raise
 
+    plan = services.assistant.plan(raw_command)
+    print(f"plan_status={plan.status}")
+    print(f"plan_confidence={plan.confidence:.2f}")
+    print(f"plan_explanation={plan.explanation}")
+    for planned_command in plan.commands:
+        print(f"planned={planned_command.raw_command}")
+
+    if plan.status != "ready":
+        if plan.missing_parameters:
+            print(f"missing={','.join(plan.missing_parameters)}")
+        if plan.warnings:
+            print(f"warnings={' | '.join(plan.warnings)}")
+        return 1
+
+    overall_success = True
+    for planned_command in plan.commands:
+        command, inputs = services.registry.parse_invocation(planned_command.raw_command)
+        outcome = services.engine.run(
+            command,
+            inputs,
+            safe_mode=safe_mode,
+            confirmation_handler=lambda _message: True,
+        )
+        print(f"status={outcome.status}")
+        print(f"summary={outcome.summary}")
+        if outcome.status not in {"completed", "stopped"}:
+            overall_success = False
+            break
+    return 0 if overall_success else 1
 
 
 def main() -> None:

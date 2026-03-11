@@ -158,11 +158,54 @@ function Complete-AgentCommand {
     return Build-AgentCommand -CommandName $commandName -Values $values -Metadata $metadata
 }
 
+function Get-AssistantPlanPayload {
+    param([string]$Instruction)
+    if ([string]::IsNullOrWhiteSpace($Instruction)) { return $null }
+    return Invoke-BackendJson -Arguments @('plan-instruction', '--instruction', $Instruction)
+}
+
+function Format-AssistantPlanText {
+    param([object]$Plan)
+    if ($null -eq $Plan) { return '' }
+    $lines = @(
+        "Assistant Plan"
+        "Status: $($Plan.status)"
+        "Confidence: $([math]::Round([double]$Plan.confidence, 2))"
+        "Source: $($Plan.source)"
+        "Explanation: $($Plan.explanation)"
+    )
+    if ($Plan.missing_parameters.Count -gt 0) {
+        $lines += ''
+        $lines += "Missing: $($Plan.missing_parameters -join ', ')"
+    }
+    if ($Plan.warnings.Count -gt 0) {
+        $lines += ''
+        $lines += 'Warnings:'
+        foreach ($warning in $Plan.warnings) { $lines += "- $warning" }
+    }
+    if ($Plan.commands.Count -gt 0) {
+        $lines += ''
+        $lines += 'Commands:'
+        $index = 1
+        foreach ($command in $Plan.commands) {
+            $lines += "$index. $($command.command_name) [$($command.risk)]"
+            $lines += "   $($command.reason)"
+            $lines += "   $($command.raw_command)"
+            $index += 1
+        }
+    }
+    return ($lines -join "`r`n")
+}
+
 if ($SelfTest) {
     if ((Complete-AgentCommand -InputText 'start day') -notmatch '^run mvp\.start_day run_date=\d{4}-\d{2}-\d{2} note_path=') { throw 'start day resolution failed.' }
     if ((Complete-AgentCommand -InputText 'note finish invoices') -notmatch '^run mvp\.note run_date=\d{4}-\d{2}-\d{2} note_text="finish invoices" note_title="Quick Note" note_path=') { throw 'note resolution failed.' }
     if ((Complete-AgentCommand -InputText 'download report') -notmatch '^run mvp\.download_report run_date=\d{4}-\d{2}-\d{2} download_dir=data/evidence/exports export_dir=data/evidence/exports$') { throw 'download report resolution failed.' }
     if ((Complete-AgentCommand -InputText 'end day') -notmatch '^run mvp\.end_day run_date=\d{4}-\d{2}-\d{2} summary_output=data/evidence/exports/end_of_day_\d{4}-\d{2}-\d{2}\.json$') { throw 'end day resolution failed.' }
+    $assistantPlan = Get-AssistantPlanPayload -Instruction "start today's office work"
+    if ($assistantPlan.plan.commands.Count -lt 3) { throw 'assistant planning failed.' }
+    $operatorSession = Invoke-BackendJson -Arguments @('operator-create-session', '--instruction', "start today's office work")
+    if ($operatorSession.tasks.Count -lt 3) { throw 'operator session creation failed.' }
     Write-Output 'desktop-ui-selftest-ok'
     exit 0
 }
@@ -630,7 +673,7 @@ $commandTitle.Location = New-Object System.Drawing.Point(0, 0)
 [void]$commandLayout.Controls.Add($commandTitle, 0, 0)
 
 $commandHint = New-Object System.Windows.Forms.Label
-$commandHint.Text = if ($script:isCompactLayout) { 'Type a shortcut or command, then press Enter.' } else { 'Type a shortcut or full command. Press Enter to run immediately.' }
+$commandHint.Text = if ($script:isCompactLayout) { 'Type a request or command, then press Enter.' } else { 'Type a natural request or a direct command. Press Enter to run immediately.' }
 $commandHint.Font = $fonts.Small
 $commandHint.ForeColor = $theme.Muted
 $commandHint.AutoSize = $true
@@ -663,7 +706,7 @@ Set-PrimaryButtonStyle -Button $runInputButton
 [void]$buttonFlow.Controls.Add($runInputButton, 0, 0)
 
 $usePreviewButton = New-Object System.Windows.Forms.Button
-$usePreviewButton.Text = if ($script:isCompactLayout) { 'Load' } else { 'Use Guided Preview' }
+$usePreviewButton.Text = if ($script:isCompactLayout) { 'Plan' } else { 'Preview Plan' }
 $usePreviewButton.Size = New-Object System.Drawing.Size($(if ($script:isCompactLayout) { 116 } else { 142 }), 32)
 $usePreviewButton.Margin = New-Object System.Windows.Forms.Padding(0, 0, 6, 0)
 $usePreviewButton.Dock = 'Fill'
@@ -736,7 +779,7 @@ $commandFooterTitle.Location = New-Object System.Drawing.Point(12, 10)
 [void]$commandFooter.Controls.Add($commandFooterTitle)
 
 $commandFooterText = New-Object System.Windows.Forms.Label
-$commandFooterText.Text = 'Shortcuts resolve automatically, guided forms fill defaults, and every run is written to history with step logs.'
+$commandFooterText.Text = 'Natural requests plan safely, guided forms fill defaults, and every run is written to history with step logs.'
 $commandFooterText.Font = $fonts.Small
 $commandFooterText.ForeColor = $theme.Muted
 $commandFooterText.MaximumSize = New-Object System.Drawing.Size(380, 0)
@@ -922,6 +965,22 @@ $refreshButton.Anchor = 'Top,Right'
 Set-SecondaryButtonStyle -Button $refreshButton
 [void]$runsHeaderPanel.Controls.Add($refreshButton)
 
+$reviewQueueButton = New-Object System.Windows.Forms.Button
+$reviewQueueButton.Text = if ($script:isCompactLayout) { 'Review' } else { 'Review Queue' }
+$reviewQueueButton.Size = New-Object System.Drawing.Size($(if ($script:isCompactLayout) { 82 } else { 98 }), 30)
+$reviewQueueButton.Location = New-Object System.Drawing.Point($(if ($script:isCompactLayout) { 202 } else { 170 }), 4)
+$reviewQueueButton.Anchor = 'Top,Right'
+Set-SecondaryButtonStyle -Button $reviewQueueButton
+[void]$runsHeaderPanel.Controls.Add($reviewQueueButton)
+
+$operatorDashboardButton = New-Object System.Windows.Forms.Button
+$operatorDashboardButton.Text = if ($script:isCompactLayout) { 'Ops' } else { 'Operator' }
+$operatorDashboardButton.Size = New-Object System.Drawing.Size($(if ($script:isCompactLayout) { 72 } else { 82 }), 30)
+$operatorDashboardButton.Location = New-Object System.Drawing.Point($(if ($script:isCompactLayout) { 124 } else { 82 }), 4)
+$operatorDashboardButton.Anchor = 'Top,Right'
+Set-SecondaryButtonStyle -Button $operatorDashboardButton
+[void]$runsHeaderPanel.Controls.Add($operatorDashboardButton)
+
 $runsFilterLayout = New-Object System.Windows.Forms.TableLayoutPanel
 $runsFilterLayout.Dock = 'Fill'
 $runsFilterLayout.ColumnCount = 3
@@ -1056,6 +1115,7 @@ $script:logsList = $logsList
 $script:statusFilterBox = $statusFilterBox
 $script:runSearchBox = $runSearchBox
 $script:failureInboxButton = $failureInboxButton
+$script:reviewQueueButton = $reviewQueueButton
 $script:artifactComboBox = $artifactComboBox
 $script:openArtifactButton = $openArtifactButton
 $script:copyArtifactButton = $copyArtifactButton
@@ -1179,7 +1239,7 @@ function Resize-CommandBarControls {
         $buttonFlow.ColumnStyles[1].Width = 38
         $buttonFlow.ColumnStyles[2].Width = 20
         $runInputButton.Text = 'Run'
-        $usePreviewButton.Text = 'Load'
+        $usePreviewButton.Text = 'Plan'
         $clearInputButton.Text = 'Clr'
     }
     else {
@@ -1187,7 +1247,7 @@ function Resize-CommandBarControls {
         $buttonFlow.ColumnStyles[1].Width = 36
         $buttonFlow.ColumnStyles[2].Width = 18
         $runInputButton.Text = 'Run Typed Command'
-        $usePreviewButton.Text = 'Use Guided Preview'
+        $usePreviewButton.Text = 'Preview Plan'
         $clearInputButton.Text = 'Clear'
     }
 }
@@ -1343,6 +1403,604 @@ function Apply-UiPreferences {
     if ($width -ge $layout.FormMinWidth -and $height -ge $layout.FormMinHeight) {
         $script:form.Size = New-Object System.Drawing.Size($width, $height)
     }
+}
+
+function Show-ReviewQueueDialog {
+    $dialog = New-Object System.Windows.Forms.Form
+    $dialog.Text = 'Review Queue'
+    $dialog.StartPosition = 'CenterParent'
+    $dialog.Size = New-Object System.Drawing.Size(920, 620)
+    $dialog.MinimumSize = New-Object System.Drawing.Size(760, 520)
+    $dialog.BackColor = $theme.Window
+    $dialog.Font = $fonts.Body
+
+    $dialogLayout = New-Object System.Windows.Forms.TableLayoutPanel
+    $dialogLayout.Dock = 'Fill'
+    $dialogLayout.ColumnCount = 1
+    $dialogLayout.RowCount = 4
+    [void]$dialogLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 40)))
+    [void]$dialogLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 55)))
+    [void]$dialogLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 45)))
+    [void]$dialogLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 44)))
+    [void]$dialog.Controls.Add($dialogLayout)
+
+    $toolbar = New-Object System.Windows.Forms.TableLayoutPanel
+    $toolbar.Dock = 'Fill'
+    $toolbar.ColumnCount = 3
+    $toolbar.RowCount = 1
+    [void]$toolbar.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Absolute, 120)))
+    [void]$toolbar.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    [void]$toolbar.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Absolute, 96)))
+    [void]$toolbar.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    [void]$dialogLayout.Controls.Add($toolbar, 0, 0)
+
+    $reviewStatusBox = New-Object System.Windows.Forms.ComboBox
+    $reviewStatusBox.DropDownStyle = 'DropDownList'
+    $reviewStatusBox.Dock = 'Fill'
+    $reviewStatusBox.Margin = New-Object System.Windows.Forms.Padding(0, 6, 8, 6)
+    [void]$reviewStatusBox.Items.AddRange(@('pending', 'corrected', 'approved', 'all'))
+    $reviewStatusBox.SelectedIndex = 0
+    [void]$toolbar.Controls.Add($reviewStatusBox, 0, 0)
+
+    $reviewHintLabel = New-Object System.Windows.Forms.Label
+    $reviewHintLabel.Text = 'Approve exact values or correct uncertain OCR outputs before resuming the workflow manually.'
+    $reviewHintLabel.Font = $fonts.Small
+    $reviewHintLabel.ForeColor = $theme.Muted
+    $reviewHintLabel.AutoSize = $true
+    $reviewHintLabel.Margin = New-Object System.Windows.Forms.Padding(0, 10, 0, 0)
+    [void]$toolbar.Controls.Add($reviewHintLabel, 1, 0)
+
+    $reviewRefreshButton = New-Object System.Windows.Forms.Button
+    $reviewRefreshButton.Text = 'Refresh'
+    $reviewRefreshButton.Dock = 'Fill'
+    $reviewRefreshButton.Margin = New-Object System.Windows.Forms.Padding(8, 4, 0, 4)
+    Set-SecondaryButtonStyle -Button $reviewRefreshButton
+    [void]$toolbar.Controls.Add($reviewRefreshButton, 2, 0)
+
+    $reviewList = New-Object System.Windows.Forms.ListView
+    $reviewList.Dock = 'Fill'
+    Set-ListViewStyle -ListView $reviewList
+    [void]$reviewList.Columns.Add('ID', 60)
+    [void]$reviewList.Columns.Add('Workflow', 150)
+    [void]$reviewList.Columns.Add('Step', 140)
+    [void]$reviewList.Columns.Add('Status', 90)
+    [void]$reviewList.Columns.Add('Suggested', 220)
+    [void]$dialogLayout.Controls.Add($reviewList, 0, 1)
+
+    $reviewDetailBox = New-Object System.Windows.Forms.TextBox
+    $reviewDetailBox.Dock = 'Fill'
+    $reviewDetailBox.Multiline = $true
+    $reviewDetailBox.ReadOnly = $true
+    $reviewDetailBox.ScrollBars = 'Vertical'
+    Set-TextSurfaceStyle -TextBox $reviewDetailBox -Mono
+    [void]$dialogLayout.Controls.Add($reviewDetailBox, 0, 2)
+
+    $actionBar = New-Object System.Windows.Forms.TableLayoutPanel
+    $actionBar.Dock = 'Fill'
+    $actionBar.ColumnCount = 5
+    $actionBar.RowCount = 1
+    [void]$actionBar.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    [void]$actionBar.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Absolute, 170)))
+    [void]$actionBar.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Absolute, 110)))
+    [void]$actionBar.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Absolute, 110)))
+    [void]$actionBar.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Absolute, 120)))
+    [void]$actionBar.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    [void]$dialogLayout.Controls.Add($actionBar, 0, 3)
+
+    $correctedValueBox = New-Object System.Windows.Forms.TextBox
+    $correctedValueBox.Dock = 'Fill'
+    $correctedValueBox.Margin = New-Object System.Windows.Forms.Padding(0, 8, 8, 8)
+    Set-TextSurfaceStyle -TextBox $correctedValueBox
+    [void]$actionBar.Controls.Add($correctedValueBox, 0, 0)
+
+    $openReviewEvidenceButton = New-Object System.Windows.Forms.Button
+    $openReviewEvidenceButton.Text = 'Open Evidence'
+    $openReviewEvidenceButton.Dock = 'Fill'
+    $openReviewEvidenceButton.Margin = New-Object System.Windows.Forms.Padding(0, 6, 8, 6)
+    Set-SecondaryButtonStyle -Button $openReviewEvidenceButton
+    [void]$actionBar.Controls.Add($openReviewEvidenceButton, 1, 0)
+
+    $approveReviewButton = New-Object System.Windows.Forms.Button
+    $approveReviewButton.Text = 'Approve'
+    $approveReviewButton.Dock = 'Fill'
+    $approveReviewButton.Margin = New-Object System.Windows.Forms.Padding(0, 6, 8, 6)
+    Set-SecondaryButtonStyle -Button $approveReviewButton
+    [void]$actionBar.Controls.Add($approveReviewButton, 2, 0)
+
+    $correctReviewButton = New-Object System.Windows.Forms.Button
+    $correctReviewButton.Text = 'Correct'
+    $correctReviewButton.Dock = 'Fill'
+    $correctReviewButton.Margin = New-Object System.Windows.Forms.Padding(0, 6, 8, 6)
+    Set-PrimaryButtonStyle -Button $correctReviewButton
+    [void]$actionBar.Controls.Add($correctReviewButton, 3, 0)
+
+    $closeReviewButton = New-Object System.Windows.Forms.Button
+    $closeReviewButton.Text = 'Close'
+    $closeReviewButton.Dock = 'Fill'
+    $closeReviewButton.Margin = New-Object System.Windows.Forms.Padding(0, 6, 0, 6)
+    Set-SecondaryButtonStyle -Button $closeReviewButton
+    [void]$actionBar.Controls.Add($closeReviewButton, 4, 0)
+
+    $reviewItems = @()
+
+    function Resize-ReviewColumns {
+        $width = [Math]::Max(540, $reviewList.ClientSize.Width - 6)
+        $reviewList.Columns[0].Width = 56
+        $reviewList.Columns[2].Width = 130
+        $reviewList.Columns[3].Width = 90
+        $reviewList.Columns[4].Width = 210
+        $reviewList.Columns[1].Width = [Math]::Max(120, $width - 56 - 130 - 90 - 210)
+    }
+
+    function Get-SelectedReviewItem {
+        if ($reviewList.SelectedItems.Count -le 0) { return $null }
+        return $reviewList.SelectedItems[0].Tag
+    }
+
+    function Show-SelectedReviewItem {
+        $item = Get-SelectedReviewItem
+        if ($null -eq $item) {
+            $reviewDetailBox.Text = ''
+            $correctedValueBox.Text = ''
+            return
+        }
+        $metadataJson = $item.metadata | ConvertTo-Json -Depth 8
+        $reviewDetailBox.Text = "Review #$($item.id)`r`nWorkflow: $($item.workflow_id)`r`nStep: $($item.step_id)`r`nStatus: $($item.status)`r`nReason: $($item.reason)`r`nSuggested: $($item.suggested_value)`r`nCorrected: $($item.corrected_value)`r`nEvidence: $($item.evidence_path)`r`nMetadata:`r`n$metadataJson"
+        $correctedValueBox.Text = if ($item.corrected_value) { [string]$item.corrected_value } else { [string]$item.suggested_value }
+    }
+
+    function Load-ReviewItems {
+        $reviewList.Items.Clear()
+        $payload = Invoke-BackendJson -Arguments @('list-review-items', '--status', ([string]$reviewStatusBox.SelectedItem), '--limit', '50')
+        $reviewItems = @($payload.items)
+        foreach ($item in $reviewItems) {
+            $row = New-Object System.Windows.Forms.ListViewItem([string]$item.id)
+            [void]$row.SubItems.Add([string]$item.workflow_id)
+            [void]$row.SubItems.Add([string]$item.step_id)
+            [void]$row.SubItems.Add([string]$item.status)
+            [void]$row.SubItems.Add([string]$item.suggested_value)
+            $row.Tag = $item
+            [void]$reviewList.Items.Add($row)
+        }
+        Resize-ReviewColumns
+        if ($reviewList.Items.Count -gt 0) {
+            $reviewList.Items[0].Selected = $true
+        }
+    }
+
+    $reviewList.Add_SelectedIndexChanged({ Show-SelectedReviewItem })
+    $reviewList.Add_Resize({ Resize-ReviewColumns })
+    $reviewStatusBox.Add_SelectedIndexChanged({ Load-ReviewItems })
+    $reviewRefreshButton.Add_Click({ Load-ReviewItems })
+    $openReviewEvidenceButton.Add_Click({
+        $item = Get-SelectedReviewItem
+        if ($null -eq $item -or [string]::IsNullOrWhiteSpace([string]$item.evidence_path)) { return }
+        if (-not (Test-Path $item.evidence_path)) {
+            [System.Windows.Forms.MessageBox]::Show("Evidence not found: $($item.evidence_path)", 'Missing Evidence', 'OK', 'Warning') | Out-Null
+            return
+        }
+        Start-Process -FilePath $item.evidence_path | Out-Null
+    })
+    $approveReviewButton.Add_Click({
+        $item = Get-SelectedReviewItem
+        if ($null -eq $item) { return }
+        [void](Invoke-BackendJson -Arguments @('resolve-review-item', '--review-id', ([string]$item.id), '--resolution', 'approved', '--corrected-value', [string]$correctedValueBox.Text))
+        Load-ReviewItems
+    })
+    $correctReviewButton.Add_Click({
+        $item = Get-SelectedReviewItem
+        if ($null -eq $item) { return }
+        [void](Invoke-BackendJson -Arguments @('resolve-review-item', '--review-id', ([string]$item.id), '--resolution', 'corrected', '--corrected-value', [string]$correctedValueBox.Text))
+        Load-ReviewItems
+    })
+    $closeReviewButton.Add_Click({ $dialog.Close() })
+
+    Load-ReviewItems
+    [void]$dialog.ShowDialog($script:form)
+}
+
+function Show-OperatorDashboardDialog {
+    $dialog = New-Object System.Windows.Forms.Form
+    $dialog.Text = 'Operator Dashboard'
+    $dialog.StartPosition = 'CenterParent'
+    $dialog.Size = New-Object System.Drawing.Size(1120, 720)
+    $dialog.MinimumSize = New-Object System.Drawing.Size(900, 620)
+    $dialog.BackColor = $theme.Window
+    $dialog.Font = $fonts.Body
+
+    $layoutRoot = New-Object System.Windows.Forms.TableLayoutPanel
+    $layoutRoot.Dock = 'Fill'
+    $layoutRoot.ColumnCount = 1
+    $layoutRoot.RowCount = 2
+    [void]$layoutRoot.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 52)))
+    [void]$layoutRoot.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    [void]$dialog.Controls.Add($layoutRoot)
+
+    $toolbar = New-Object System.Windows.Forms.TableLayoutPanel
+    $toolbar.Dock = 'Fill'
+    $toolbar.ColumnCount = 6
+    [void]$toolbar.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    [void]$toolbar.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Absolute, 124)))
+    [void]$toolbar.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Absolute, 96)))
+    [void]$toolbar.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Absolute, 104)))
+    [void]$toolbar.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Absolute, 86)))
+    [void]$toolbar.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Absolute, 90)))
+    [void]$layoutRoot.Controls.Add($toolbar, 0, 0)
+
+    $sessionInstructionBox = New-Object System.Windows.Forms.TextBox
+    $sessionInstructionBox.Dock = 'Fill'
+    $sessionInstructionBox.Margin = New-Object System.Windows.Forms.Padding(0, 8, 8, 8)
+    Set-TextSurfaceStyle -TextBox $sessionInstructionBox
+    $sessionInstructionBox.Text = if (-not [string]::IsNullOrWhiteSpace($script:agentInputBox.Text)) { [string]$script:agentInputBox.Text } else { "start today's office work" }
+    [void]$toolbar.Controls.Add($sessionInstructionBox, 0, 0)
+
+    $createSessionButton = New-Object System.Windows.Forms.Button
+    $createSessionButton.Text = 'Create Session'
+    $createSessionButton.Dock = 'Fill'
+    $createSessionButton.Margin = New-Object System.Windows.Forms.Padding(0, 8, 8, 8)
+    Set-PrimaryButtonStyle -Button $createSessionButton
+    [void]$toolbar.Controls.Add($createSessionButton, 1, 0)
+
+    $runNextSessionButton = New-Object System.Windows.Forms.Button
+    $runNextSessionButton.Text = 'Run Next'
+    $runNextSessionButton.Dock = 'Fill'
+    $runNextSessionButton.Margin = New-Object System.Windows.Forms.Padding(0, 8, 8, 8)
+    Set-SecondaryButtonStyle -Button $runNextSessionButton
+    [void]$toolbar.Controls.Add($runNextSessionButton, 2, 0)
+
+    $runQueueButton = New-Object System.Windows.Forms.Button
+    $runQueueButton.Text = 'Run Queue'
+    $runQueueButton.Dock = 'Fill'
+    $runQueueButton.Margin = New-Object System.Windows.Forms.Padding(0, 8, 8, 8)
+    Set-SecondaryButtonStyle -Button $runQueueButton
+    [void]$toolbar.Controls.Add($runQueueButton, 3, 0)
+
+    $pauseSessionButton = New-Object System.Windows.Forms.Button
+    $pauseSessionButton.Text = 'Pause'
+    $pauseSessionButton.Dock = 'Fill'
+    $pauseSessionButton.Margin = New-Object System.Windows.Forms.Padding(0, 8, 8, 8)
+    Set-SecondaryButtonStyle -Button $pauseSessionButton
+    [void]$toolbar.Controls.Add($pauseSessionButton, 4, 0)
+
+    $refreshOperatorButton = New-Object System.Windows.Forms.Button
+    $refreshOperatorButton.Text = 'Refresh'
+    $refreshOperatorButton.Dock = 'Fill'
+    $refreshOperatorButton.Margin = New-Object System.Windows.Forms.Padding(0, 8, 0, 8)
+    Set-SecondaryButtonStyle -Button $refreshOperatorButton
+    [void]$toolbar.Controls.Add($refreshOperatorButton, 5, 0)
+
+    $mainSplit = New-Object System.Windows.Forms.SplitContainer
+    $mainSplit.Dock = 'Fill'
+    $mainSplit.SplitterDistance = 320
+    $mainSplit.BackColor = $theme.Window
+    [void]$layoutRoot.Controls.Add($mainSplit, 0, 1)
+
+    $sessionsCard = New-Object System.Windows.Forms.Panel
+    $sessionsCard.Dock = 'Fill'
+    $sessionsCard.Padding = New-Object System.Windows.Forms.Padding(14)
+    Set-CardStyle -Control $sessionsCard -BackColor $theme.Card
+    [void]$mainSplit.Panel1.Controls.Add($sessionsCard)
+
+    $sessionsLayout = New-Object System.Windows.Forms.TableLayoutPanel
+    $sessionsLayout.Dock = 'Fill'
+    $sessionsLayout.ColumnCount = 1
+    $sessionsLayout.RowCount = 2
+    [void]$sessionsLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 38)))
+    [void]$sessionsLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    [void]$sessionsCard.Controls.Add($sessionsLayout)
+
+    $sessionsHeader = New-Object System.Windows.Forms.Label
+    $sessionsHeader.Text = 'Sessions'
+    $sessionsHeader.Font = $fonts.Section
+    $sessionsHeader.ForeColor = $theme.Text
+    $sessionsHeader.AutoSize = $true
+    [void]$sessionsLayout.Controls.Add($sessionsHeader, 0, 0)
+
+    $sessionsList = New-Object System.Windows.Forms.ListView
+    $sessionsList.Dock = 'Fill'
+    Set-ListViewStyle -ListView $sessionsList
+    [void]$sessionsList.Columns.Add('ID', 48)
+    [void]$sessionsList.Columns.Add('Name', 160)
+    [void]$sessionsList.Columns.Add('Status', 86)
+    [void]$sessionsLayout.Controls.Add($sessionsList, 0, 1)
+
+    $rightLayout = New-Object System.Windows.Forms.TableLayoutPanel
+    $rightLayout.Dock = 'Fill'
+    $rightLayout.ColumnCount = 1
+    $rightLayout.RowCount = 2
+    [void]$rightLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 55)))
+    [void]$rightLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 45)))
+    [void]$mainSplit.Panel2.Controls.Add($rightLayout)
+
+    $tasksCard = New-Object System.Windows.Forms.Panel
+    $tasksCard.Dock = 'Fill'
+    $tasksCard.Padding = New-Object System.Windows.Forms.Padding(14)
+    Set-CardStyle -Control $tasksCard -BackColor $theme.Card
+    [void]$rightLayout.Controls.Add($tasksCard, 0, 0)
+
+    $tasksLayout = New-Object System.Windows.Forms.TableLayoutPanel
+    $tasksLayout.Dock = 'Fill'
+    $tasksLayout.ColumnCount = 1
+    $tasksLayout.RowCount = 2
+    [void]$tasksLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 38)))
+    [void]$tasksLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    [void]$tasksCard.Controls.Add($tasksLayout)
+
+    $tasksHeader = New-Object System.Windows.Forms.Label
+    $tasksHeader.Text = 'Queue Tasks'
+    $tasksHeader.Font = $fonts.Section
+    $tasksHeader.ForeColor = $theme.Text
+    $tasksHeader.AutoSize = $true
+    [void]$tasksLayout.Controls.Add($tasksHeader, 0, 0)
+
+    $tasksList = New-Object System.Windows.Forms.ListView
+    $tasksList.Dock = 'Fill'
+    Set-ListViewStyle -ListView $tasksList
+    [void]$tasksList.Columns.Add('#', 44)
+    [void]$tasksList.Columns.Add('Command', 160)
+    [void]$tasksList.Columns.Add('Status', 90)
+    [void]$tasksList.Columns.Add('Priority', 74)
+    [void]$tasksList.Columns.Add('Retries', 64)
+    [void]$tasksLayout.Controls.Add($tasksList, 0, 1)
+
+    $bottomSplit = New-Object System.Windows.Forms.SplitContainer
+    $bottomSplit.Dock = 'Fill'
+    $bottomSplit.SplitterDistance = 430
+    $bottomSplit.BackColor = $theme.Window
+    [void]$rightLayout.Controls.Add($bottomSplit, 0, 1)
+
+    $summaryCard = New-Object System.Windows.Forms.Panel
+    $summaryCard.Dock = 'Fill'
+    $summaryCard.Padding = New-Object System.Windows.Forms.Padding(14)
+    Set-CardStyle -Control $summaryCard -BackColor $theme.Card
+    [void]$bottomSplit.Panel1.Controls.Add($summaryCard)
+
+    $summaryLayout = New-Object System.Windows.Forms.TableLayoutPanel
+    $summaryLayout.Dock = 'Fill'
+    $summaryLayout.ColumnCount = 1
+    $summaryLayout.RowCount = 2
+    [void]$summaryLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 38)))
+    [void]$summaryLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    [void]$summaryCard.Controls.Add($summaryLayout)
+
+    $summaryHeader = New-Object System.Windows.Forms.Label
+    $summaryHeader.Text = 'Session Summary'
+    $summaryHeader.Font = $fonts.Section
+    $summaryHeader.ForeColor = $theme.Text
+    $summaryHeader.AutoSize = $true
+    [void]$summaryLayout.Controls.Add($summaryHeader, 0, 0)
+
+    $sessionSummaryBox = New-Object System.Windows.Forms.TextBox
+    $sessionSummaryBox.Dock = 'Fill'
+    $sessionSummaryBox.Multiline = $true
+    $sessionSummaryBox.ReadOnly = $true
+    $sessionSummaryBox.ScrollBars = 'Vertical'
+    Set-TextSurfaceStyle -TextBox $sessionSummaryBox -Mono
+    [void]$summaryLayout.Controls.Add($sessionSummaryBox, 0, 1)
+
+    $exceptionCard = New-Object System.Windows.Forms.Panel
+    $exceptionCard.Dock = 'Fill'
+    $exceptionCard.Padding = New-Object System.Windows.Forms.Padding(14)
+    Set-CardStyle -Control $exceptionCard -BackColor $theme.Card
+    [void]$bottomSplit.Panel2.Controls.Add($exceptionCard)
+
+    $exceptionLayout = New-Object System.Windows.Forms.TableLayoutPanel
+    $exceptionLayout.Dock = 'Fill'
+    $exceptionLayout.ColumnCount = 1
+    $exceptionLayout.RowCount = 3
+    [void]$exceptionLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 38)))
+    [void]$exceptionLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
+    [void]$exceptionLayout.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Absolute, 42)))
+    [void]$exceptionCard.Controls.Add($exceptionLayout)
+
+    $exceptionHeader = New-Object System.Windows.Forms.Label
+    $exceptionHeader.Text = 'Exceptions'
+    $exceptionHeader.Font = $fonts.Section
+    $exceptionHeader.ForeColor = $theme.Text
+    $exceptionHeader.AutoSize = $true
+    [void]$exceptionLayout.Controls.Add($exceptionHeader, 0, 0)
+
+    $exceptionsList = New-Object System.Windows.Forms.ListView
+    $exceptionsList.Dock = 'Fill'
+    Set-ListViewStyle -ListView $exceptionsList
+    [void]$exceptionsList.Columns.Add('ID', 46)
+    [void]$exceptionsList.Columns.Add('Kind', 110)
+    [void]$exceptionsList.Columns.Add('Status', 90)
+    [void]$exceptionsList.Columns.Add('Message', 260)
+    [void]$exceptionLayout.Controls.Add($exceptionsList, 0, 1)
+
+    $exceptionActions = New-Object System.Windows.Forms.FlowLayoutPanel
+    $exceptionActions.Dock = 'Fill'
+    $exceptionActions.FlowDirection = 'LeftToRight'
+    $exceptionActions.WrapContents = $false
+    [void]$exceptionLayout.Controls.Add($exceptionActions, 0, 2)
+
+    $approveExceptionButton = New-Object System.Windows.Forms.Button
+    $approveExceptionButton.Text = 'Approve'
+    $approveExceptionButton.Size = New-Object System.Drawing.Size(90, 28)
+    Set-SecondaryButtonStyle -Button $approveExceptionButton
+    [void]$exceptionActions.Controls.Add($approveExceptionButton)
+
+    $retryExceptionButton = New-Object System.Windows.Forms.Button
+    $retryExceptionButton.Text = 'Retry'
+    $retryExceptionButton.Size = New-Object System.Drawing.Size(80, 28)
+    Set-PrimaryButtonStyle -Button $retryExceptionButton
+    [void]$exceptionActions.Controls.Add($retryExceptionButton)
+
+    $operatorHint = New-Object System.Windows.Forms.Label
+    $operatorHint.Text = 'Create a session from a natural request, then run the next task or the full safe queue.'
+    $operatorHint.Font = $fonts.Small
+    $operatorHint.ForeColor = $theme.Muted
+    $operatorHint.AutoSize = $true
+    $operatorHint.Margin = New-Object System.Windows.Forms.Padding(12, 7, 0, 0)
+    [void]$exceptionActions.Controls.Add($operatorHint)
+
+    function Resize-OperatorSessionColumns {
+        $width = [Math]::Max(240, $sessionsList.ClientSize.Width - 6)
+        $sessionsList.Columns[0].Width = 44
+        $sessionsList.Columns[2].Width = 84
+        $sessionsList.Columns[1].Width = [Math]::Max(120, $width - 44 - 84)
+    }
+
+    function Resize-OperatorTaskColumns {
+        $width = [Math]::Max(420, $tasksList.ClientSize.Width - 6)
+        $tasksList.Columns[0].Width = 38
+        $tasksList.Columns[2].Width = 90
+        $tasksList.Columns[3].Width = 72
+        $tasksList.Columns[4].Width = 64
+        $tasksList.Columns[1].Width = [Math]::Max(140, $width - 38 - 90 - 72 - 64)
+    }
+
+    function Resize-OperatorExceptionColumns {
+        $width = [Math]::Max(360, $exceptionsList.ClientSize.Width - 6)
+        $exceptionsList.Columns[0].Width = 42
+        $exceptionsList.Columns[1].Width = 100
+        $exceptionsList.Columns[2].Width = 82
+        $exceptionsList.Columns[3].Width = [Math]::Max(120, $width - 42 - 100 - 82)
+    }
+
+    function Get-SelectedOperatorSession {
+        if ($sessionsList.SelectedItems.Count -le 0) { return $null }
+        return $sessionsList.SelectedItems[0].Tag
+    }
+
+    function Get-SelectedOperatorException {
+        if ($exceptionsList.SelectedItems.Count -le 0) { return $null }
+        return $exceptionsList.SelectedItems[0].Tag
+    }
+
+    function Show-OperatorSessionDetails {
+        param([int]$SessionId)
+        $payload = Invoke-BackendJson -Arguments @('operator-session-details', '--session-id', [string]$SessionId)
+        $tasksList.Items.Clear()
+        foreach ($task in $payload.tasks) {
+            $row = New-Object System.Windows.Forms.ListViewItem([string]$task.position)
+            [void]$row.SubItems.Add([string]$task.command_name)
+            [void]$row.SubItems.Add([string]$task.status)
+            [void]$row.SubItems.Add([string]$task.priority)
+            [void]$row.SubItems.Add(([string]$task.retries + '/' + [string]$task.max_retries))
+            $row.Tag = $task
+            [void]$tasksList.Items.Add($row)
+        }
+        $exceptionsList.Items.Clear()
+        foreach ($exception in $payload.exceptions) {
+            $row = New-Object System.Windows.Forms.ListViewItem([string]$exception.id)
+            [void]$row.SubItems.Add([string]$exception.kind)
+            [void]$row.SubItems.Add([string]$exception.status)
+            [void]$row.SubItems.Add([string]$exception.message)
+            $row.Tag = $exception
+            [void]$exceptionsList.Items.Add($row)
+        }
+        $sessionSummaryBox.Text = $payload.summary_text
+        Resize-OperatorTaskColumns
+        Resize-OperatorExceptionColumns
+    }
+
+    function Load-OperatorSessions {
+        $selectedId = if ($sessionsList.SelectedItems.Count -gt 0) { [int]$sessionsList.SelectedItems[0].Tag.id } else { $null }
+        $payload = Invoke-BackendJson -Arguments @('operator-list-sessions', '--limit', '25', '--status', 'all')
+        $sessionsList.Items.Clear()
+        foreach ($session in $payload.sessions) {
+            $row = New-Object System.Windows.Forms.ListViewItem([string]$session.id)
+            [void]$row.SubItems.Add([string]$session.name)
+            [void]$row.SubItems.Add([string]$session.status)
+            $row.Tag = $session
+            [void]$sessionsList.Items.Add($row)
+        }
+        Resize-OperatorSessionColumns
+        if ($null -ne $selectedId) {
+            foreach ($row in $sessionsList.Items) {
+                if ([int]$row.Tag.id -eq $selectedId) {
+                    $row.Selected = $true
+                    break
+                }
+            }
+        }
+        elseif ($sessionsList.Items.Count -gt 0) {
+            $sessionsList.Items[0].Selected = $true
+        }
+    }
+
+    function Refresh-SelectedOperatorSession {
+        $selected = Get-SelectedOperatorSession
+        if ($null -eq $selected) {
+            $tasksList.Items.Clear()
+            $exceptionsList.Items.Clear()
+            $sessionSummaryBox.Text = ''
+            return
+        }
+        Show-OperatorSessionDetails -SessionId ([int]$selected.id)
+    }
+
+    function Invoke-OperatorAction {
+        param([string[]]$Arguments)
+        $dialog.UseWaitCursor = $true
+        [System.Windows.Forms.Application]::DoEvents()
+        try {
+            [void](Invoke-BackendJson -Arguments $Arguments)
+            Load-OperatorSessions
+            Refresh-SelectedOperatorSession
+            Load-Runs
+        }
+        finally {
+            $dialog.UseWaitCursor = $false
+        }
+    }
+
+    $sessionsList.Add_SelectedIndexChanged({ Refresh-SelectedOperatorSession })
+    $sessionsList.Add_Resize({ Resize-OperatorSessionColumns })
+    $tasksList.Add_Resize({ Resize-OperatorTaskColumns })
+    $exceptionsList.Add_Resize({ Resize-OperatorExceptionColumns })
+    $refreshOperatorButton.Add_Click({ Load-OperatorSessions; Refresh-SelectedOperatorSession })
+    $createSessionButton.Add_Click({
+        try {
+            $instruction = $sessionInstructionBox.Text.Trim()
+            if ([string]::IsNullOrWhiteSpace($instruction)) { throw 'Enter a request to build the operator session.' }
+            $payload = Invoke-BackendJson -Arguments @('operator-create-session', '--instruction', $instruction)
+            Load-OperatorSessions
+            foreach ($row in $sessionsList.Items) {
+                if ([int]$row.Tag.id -eq [int]$payload.session.id) { $row.Selected = $true; break }
+            }
+        }
+        catch {
+            [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Operator Session Error', 'OK', 'Warning') | Out-Null
+        }
+    })
+    $runNextSessionButton.Add_Click({
+        $selected = Get-SelectedOperatorSession
+        if ($null -eq $selected) { return }
+        $arguments = @('operator-run-next', '--session-id', ([string]$selected.id))
+        if ($safeModeCheckbox.Checked) { $arguments += '--safe-mode' }
+        if ($confirmRiskCheckbox.Checked) { $arguments += '--confirm-risky' }
+        Invoke-OperatorAction -Arguments $arguments
+    })
+    $runQueueButton.Add_Click({
+        $selected = Get-SelectedOperatorSession
+        if ($null -eq $selected) { return }
+        $arguments = @('operator-run-session', '--session-id', ([string]$selected.id))
+        if ($safeModeCheckbox.Checked) { $arguments += '--safe-mode' }
+        if ($confirmRiskCheckbox.Checked) { $arguments += '--confirm-risky' }
+        Invoke-OperatorAction -Arguments $arguments
+    })
+    $pauseSessionButton.Add_Click({
+        $selected = Get-SelectedOperatorSession
+        if ($null -eq $selected) { return }
+        Invoke-OperatorAction -Arguments @('operator-pause-session', '--session-id', ([string]$selected.id))
+    })
+    $approveExceptionButton.Add_Click({
+        $selected = Get-SelectedOperatorException
+        if ($null -eq $selected) { return }
+        Invoke-OperatorAction -Arguments @('operator-resolve-exception', '--exception-id', ([string]$selected.id), '--resolution', 'approved')
+    })
+    $retryExceptionButton.Add_Click({
+        $selected = Get-SelectedOperatorException
+        if ($null -eq $selected) { return }
+        Invoke-OperatorAction -Arguments @('operator-resolve-exception', '--exception-id', ([string]$selected.id), '--resolution', 'retry')
+    })
+
+    Load-OperatorSessions
+    Refresh-SelectedOperatorSession
+    [void]$dialog.ShowDialog($script:form)
 }
 
 
@@ -1655,6 +2313,99 @@ function Invoke-RunWorkflow {
     }
 }
 
+function Show-AssistantPlanPreview {
+    param([string]$Instruction)
+    if ([string]::IsNullOrWhiteSpace($Instruction)) {
+        [System.Windows.Forms.MessageBox]::Show('Type a request before previewing the assistant plan.', 'Missing Request', 'OK', 'Warning') | Out-Null
+        return
+    }
+    try {
+        $payload = Get-AssistantPlanPayload -Instruction $Instruction
+        $planText = Format-AssistantPlanText -Plan $payload.plan
+        $script:detailBox.Text = $planText
+        if ($payload.plan.commands.Count -eq 1) {
+            Select-CommandByName -CommandName ([string]$payload.plan.commands[0].command_name)
+        }
+        if ($payload.plan.status -eq 'ready') {
+            Set-StatusText -Text 'Plan Ready' -Color $theme.Success
+        }
+        elseif ($payload.plan.status -eq 'needs_confirmation') {
+            Set-StatusText -Text 'Review Plan' -Color $theme.Warning
+        }
+        else {
+            Set-StatusText -Text 'Need Input' -Color $theme.Warning
+        }
+    }
+    catch {
+        Set-StatusText -Text 'Plan Error' -Color $theme.Danger
+        $script:detailBox.Text = $_.Exception.Message
+        [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Plan Error', 'OK', 'Error') | Out-Null
+    }
+}
+
+function Invoke-RunInstruction {
+    param([string]$Instruction)
+    if ([string]::IsNullOrWhiteSpace($Instruction)) {
+        [System.Windows.Forms.MessageBox]::Show('Enter a request or select a workflow before running.', 'Missing Request', 'OK', 'Warning') | Out-Null
+        return
+    }
+    $baseArguments = @('run-instruction', '--instruction', $Instruction)
+    if ($safeModeCheckbox.Checked) { $baseArguments += '--safe-mode' }
+    if ($confirmRiskCheckbox.Checked) { $baseArguments += '--confirm-risky' }
+    try {
+        Set-StatusText -Text 'Running' -Color $theme.Warning
+        $script:detailBox.Text = "Planning and running:`r`n$Instruction"
+        $script:form.UseWaitCursor = $true
+        [System.Windows.Forms.Application]::DoEvents()
+        $payload = Invoke-BackendJson -Arguments $baseArguments
+        if ($payload.outcome.status -eq 'needs_confirmation') {
+            $message = (Format-AssistantPlanText -Plan $payload.plan) + "`r`n`r`nRun this reviewed plan?"
+            $decision = [System.Windows.Forms.MessageBox]::Show($message, 'Confirm Assistant Plan', 'YesNo', 'Question')
+            if ($decision -ne [System.Windows.Forms.DialogResult]::Yes) {
+                Set-StatusText -Text 'Review Plan' -Color $theme.Warning
+                $script:detailBox.Text = Format-AssistantPlanText -Plan $payload.plan
+                return
+            }
+            $payload = Invoke-BackendJson -Arguments ($baseArguments + '--confirm-plan')
+        }
+
+        if ($payload.outcome.status -in @('needs_clarification', 'unmatched')) {
+            Set-StatusText -Text 'Need Input' -Color $theme.Warning
+            $script:detailBox.Text = Format-AssistantPlanText -Plan $payload.plan
+            return
+        }
+
+        if ($payload.outcome.status -eq 'completed') {
+            Set-StatusText -Text 'Completed' -Color $theme.Success
+        }
+        elseif ($payload.outcome.status -eq 'partial') {
+            Set-StatusText -Text 'Partial' -Color $theme.Warning
+        }
+        else {
+            Set-StatusText -Text 'Failed' -Color $theme.Danger
+        }
+
+        Load-Runs
+        if ($payload.runs.Count -gt 0) {
+            $latestRunId = [int]$payload.runs[-1].outcome.run_id
+            Show-RunDetails -RunId $latestRunId
+            $latestDetail = $script:detailBox.Text
+            $script:detailBox.Text = (Format-AssistantPlanText -Plan $payload.plan) + "`r`n`r`nExecution:`r`nStatus: $($payload.outcome.status)`r`nCompleted: $($payload.outcome.summary.completed_commands) / $($payload.outcome.summary.total_commands)`r`n`r`nLatest run detail:`r`n$latestDetail"
+        }
+        else {
+            $script:detailBox.Text = (Format-AssistantPlanText -Plan $payload.plan) + "`r`n`r`nExecution status: $($payload.outcome.status)"
+        }
+    }
+    catch {
+        Set-StatusText -Text 'Failed' -Color $theme.Danger
+        $script:detailBox.Text = $_.Exception.Message
+        [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Run Failed', 'OK', 'Error') | Out-Null
+    }
+    finally {
+        $script:form.UseWaitCursor = $false
+    }
+}
+
 $quickButtonSpecs = @(
     @{ Text = 'Start Day'; CompactText = 'Start'; Command = 'mvp.start_day'; Input = 'start day'; Description = 'Create a daily note and open the workspace tools.' },
     @{ Text = 'Quick Note'; CompactText = 'Note'; Command = 'mvp.note'; Input = 'note '; Description = 'Write a quick note and open it in Notepad.' },
@@ -1727,6 +2478,14 @@ $failureInboxButton.Add_Click({
     Refresh-RunListView
     Save-UiPreferences
 })
+$reviewQueueButton.Add_Click({
+    Show-ReviewQueueDialog
+    Load-Runs
+})
+$operatorDashboardButton.Add_Click({
+    Show-OperatorDashboardDialog
+    Load-Runs
+})
 $artifactComboBox.Add_SelectedIndexChanged({
     $enabled = ($script:artifactComboBox.SelectedIndex -ge 0)
     $script:openArtifactButton.Enabled = $enabled
@@ -1749,11 +2508,7 @@ $runInputButton.Add_Click({
             $text = Get-SelectedWorkflowCommand
             $script:agentInputBox.Text = $text
         }
-        else {
-            $text = Complete-AgentCommand -InputText $text
-            $script:agentInputBox.Text = $text
-        }
-        Invoke-RunWorkflow -RawCommand $text
+        Invoke-RunInstruction -Instruction $text
     }
     catch {
         [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Input Error', 'OK', 'Warning') | Out-Null
@@ -1770,7 +2525,18 @@ $runSelectedButton.Add_Click({
     }
 })
 $resetDefaultsButton.Add_Click({ Reset-SelectedCommandInputs })
-$usePreviewButton.Add_Click({ if (-not [string]::IsNullOrWhiteSpace($script:previewBox.Text)) { $script:agentInputBox.Text = $script:previewBox.Text; $script:agentInputBox.Focus(); $script:agentInputBox.SelectionStart = $script:agentInputBox.Text.Length } })
+$usePreviewButton.Add_Click({
+    $typedInput = $script:agentInputBox.Text.Trim()
+    if (-not [string]::IsNullOrWhiteSpace($typedInput)) {
+        Show-AssistantPlanPreview -Instruction $typedInput
+        return
+    }
+    if (-not [string]::IsNullOrWhiteSpace($script:previewBox.Text)) {
+        $script:agentInputBox.Text = $script:previewBox.Text
+        $script:agentInputBox.Focus()
+        $script:agentInputBox.SelectionStart = $script:agentInputBox.Text.Length
+    }
+})
 $clearInputButton.Add_Click({ $script:agentInputBox.Clear(); $script:agentInputBox.Focus() })
 $agentInputBox.Add_KeyDown({ if ($_.KeyCode -eq [System.Windows.Forms.Keys]::Enter) { $_.SuppressKeyPress = $true; $runInputButton.PerformClick() } })
 $safeModeCheckbox.Add_CheckedChanged({ Update-ModeText; Save-UiPreferences })
@@ -1807,7 +2573,7 @@ if (-not $uiPreferences.ContainsKey('selected_command')) {
     Select-CommandByName -CommandName 'mvp.start_day'
 }
 $agentInputBox.Text = if ($uiPreferences.ContainsKey('last_input')) { [string]$uiPreferences['last_input'] } else { 'start day' }
-$detailBox.Text = 'Use the command bar, quick actions, or the guided workflow editor. Every run appears below with full step history.'
+$detailBox.Text = 'Type a natural request, use a quick action, or run a guided workflow. Every run appears below with full step history.'
 Set-StatusText -Text 'Ready' -Color $theme.Success
 Resize-RunColumns
 Resize-LogColumns

@@ -154,6 +154,50 @@ class WorkflowEngineTests(unittest.TestCase):
             self.assertEqual(outcome.status, "completed")
             self.assertTrue(summary_path.exists())
 
+    def test_phase2_invoice_workflow_extracts_invoice_id(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            runtime = build_runtime(temp_path)
+            image_path = temp_path / "invoice_input.txt"
+            image_path.write_text("INV-2931", encoding="utf-8")
+            result_path = temp_path / "invoice_result.txt"
+            command = runtime.registry.get("phase2.read_invoice_id")
+            outcome = runtime.engine.run(
+                command,
+                {
+                    "image_path": str(image_path),
+                    "result_path": str(result_path),
+                },
+                safe_mode=False,
+                confirmation_handler=lambda _message: True,
+            )
+            self.assertEqual(outcome.status, "completed")
+            self.assertTrue(result_path.exists())
+            self.assertIn("INV-2931", result_path.read_text(encoding="utf-8"))
+
+    def test_phase2_invoice_workflow_queues_manual_review_for_invalid_text(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            runtime = build_runtime(temp_path)
+            image_path = temp_path / "invoice_bad.txt"
+            image_path.write_text("UNKNOWN", encoding="utf-8")
+            command = runtime.registry.get("phase2.read_invoice_id")
+            outcome = runtime.engine.run(
+                command,
+                {
+                    "image_path": str(image_path),
+                    "result_path": str(temp_path / "invoice_review.txt"),
+                },
+                safe_mode=False,
+                confirmation_handler=lambda _message: True,
+            )
+            self.assertEqual(outcome.status, "needs_review")
+            self.assertIn("review_item_id", outcome.summary)
+            items = runtime.review_queue.list_items(status="pending")
+            self.assertEqual(1, len(items))
+            self.assertEqual("phase2_read_invoice_id", items[0]["workflow_id"])
+            self.assertTrue(items[0]["evidence_path"])
+
 
 if __name__ == "__main__":
     unittest.main()

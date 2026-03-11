@@ -1,0 +1,119 @@
+{
+  "id": "phase2_read_invoice_id",
+  "version": "2.0.0",
+  "inputs": {
+    "crop_path": "data/evidence/review/invoice_crop.png",
+    "preprocessed_path": "data/evidence/review/invoice_preprocessed.png",
+    "result_path": "data/evidence/review/invoice_result.txt",
+    "invoice_pattern": "(INV-\\d{4})",
+    "mock_text": "",
+    "mock_confidence": "0.95"
+  },
+  "steps": [
+    {
+      "step_id": "crop_invoice_region",
+      "action": {
+        "type": "image.crop_region",
+        "args": {
+          "image_path": "{image_path}",
+          "output_path": "{crop_path}"
+        },
+        "on_fail": {"strategy": "abort"}
+      },
+      "validate": [
+        {
+          "kind": "files.exists",
+          "args": {"path": "{cropped_path}"},
+          "on_fail": {"strategy": "abort"}
+        }
+      ]
+    },
+    {
+      "step_id": "prepare_for_ocr",
+      "action": {
+        "type": "image.preprocess_for_ocr",
+        "args": {
+          "image_path": "{cropped_path}",
+          "output_path": "{preprocessed_path}"
+        },
+        "on_fail": {"strategy": "abort"}
+      },
+      "validate": [
+        {
+          "kind": "files.exists",
+          "args": {"path": "{preprocessed_path}"},
+          "on_fail": {"strategy": "abort"}
+        }
+      ]
+    },
+    {
+      "step_id": "ocr_invoice_id",
+      "action": {
+        "type": "vision.ocr_region",
+        "args": {
+          "image_path": "{preprocessed_path}",
+          "mock_text": "{mock_text}",
+          "confidence": "{mock_confidence}"
+        },
+        "on_fail": {"strategy": "review"}
+      },
+      "validate": [
+        {
+          "kind": "vision.ocr_confidence_min",
+          "args": {"min_confidence": 0.8},
+          "on_fail": {"strategy": "review"}
+        },
+        {
+          "kind": "ocr.matches_regex",
+          "args": {"pattern": "{invoice_pattern}"},
+          "on_fail": {"strategy": "review"}
+        }
+      ]
+    },
+    {
+      "step_id": "extract_invoice_id",
+      "action": {
+        "type": "image.parse_regex",
+        "args": {
+          "text": "{ocr_text}",
+          "pattern": "{invoice_pattern}",
+          "field_name": "invoice_id",
+          "ocr_confidence": "{ocr_confidence}"
+        },
+        "on_fail": {"strategy": "review"}
+      },
+      "validate": [
+        {
+          "kind": "data.non_empty",
+          "args": {"value": "{invoice_id}"},
+          "on_fail": {"strategy": "review"}
+        }
+      ]
+    },
+    {
+      "step_id": "write_invoice_result",
+      "action": {
+        "type": "files.write_text",
+        "args": {
+          "path": "{result_path}",
+          "content": "invoice_id={invoice_id}\nocr_text={ocr_text}\nocr_confidence={ocr_confidence}\nparsed_confidence={parsed_confidence}\nsource_image={image_path}\n"
+        },
+        "on_fail": {"strategy": "abort"}
+      },
+      "validate": [
+        {
+          "kind": "files.exists",
+          "args": {"path": "{written_path}"},
+          "on_fail": {"strategy": "abort"}
+        }
+      ]
+    }
+  ],
+  "success_criteria": [
+    {
+      "kind": "files.exists",
+      "args": {"path": "{result_path}"},
+      "on_fail": {"strategy": "abort"}
+    }
+  ]
+}
