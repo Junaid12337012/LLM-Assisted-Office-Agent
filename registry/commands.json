@@ -142,6 +142,22 @@
       "requires_confirmation": false
     },
     {
+      "name": "desktop.print_today_vouchers",
+      "description": "Navigate to the voucher list, apply today's date range, load vouchers, and confirm printing.",
+      "workflow_id": "print_today_vouchers",
+      "parameters": [
+        {"name": "app_name", "type": "string", "required": false},
+        {"name": "date_from", "type": "string", "required": false},
+        {"name": "date_to", "type": "string", "required": false}
+      ],
+      "risk": "medium",
+      "allowed_targets": {
+        "apps": ["Entry Manager", "Voucher List", "Print Dialog"],
+        "domains": []
+      },
+      "requires_confirmation": true
+    },
+    {
       "name": "reports.end_of_day_summary",
       "description": "Export a summary of the day's workflow runs from SQLite.",
       "workflow_id": "end_of_day_report",

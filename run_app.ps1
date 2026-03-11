@@ -9,6 +9,7 @@ Set-Location $repoRoot
 $python = Join-Path $repoRoot '.tools\python311\runtime\python.exe'
 $desktopScript = Join-Path $repoRoot 'desktop_app.ps1'
 $consoleScript = Join-Path $repoRoot 'agent_console.ps1'
+$trainingScript = Join-Path $repoRoot 'training_mode.ps1'
 
 if (-not (Test-Path $python)) {
     throw "Portable Python runtime not found at $python"
@@ -18,6 +19,9 @@ if (-not (Test-Path $desktopScript)) {
 }
 if (-not (Test-Path $consoleScript)) {
     throw "Agent console script not found at $consoleScript"
+}
+if (-not (Test-Path $trainingScript)) {
+    throw "Training mode script not found at $trainingScript"
 }
 
 if ($CommandParts.Count -eq 0) {
@@ -32,6 +36,11 @@ if ($CommandParts[0] -in @('--desktop', '-Desktop')) {
 
 if ($CommandParts[0] -in @('--console', '-Console')) {
     powershell -ExecutionPolicy Bypass -File $consoleScript
+    exit $LASTEXITCODE
+}
+
+if ($CommandParts[0] -in @('--training', '-Training')) {
+    powershell -ExecutionPolicy Bypass -File $trainingScript
     exit $LASTEXITCODE
 }
 

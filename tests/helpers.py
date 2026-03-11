@@ -16,6 +16,8 @@ from core.observer import Observer
 from core.recovery import ErrorSignatureRegistry, RecoveryEngine
 from core.review_queue import ReviewQueue
 from core.safety import SafetyGate
+from core.state_contracts import ScreenContractRegistry
+from core.state_detector import StateDetector
 from core.validator import Validator
 from core.workflow_engine import WorkflowEngine, WorkflowRepository
 from llm.confidence import ConfidencePolicy
@@ -27,6 +29,8 @@ from operator_runtime.exception_queue import OperatorExceptionQueue
 from operator_runtime.session_manager import SessionManager
 from operator_runtime.summary_manager import SummaryManager
 from operator_runtime.task_queue import TaskQueue
+from training.screen_model import ScreenModel
+from training.template_store import ScreenTemplateStore
 
 
 
@@ -35,6 +39,8 @@ def build_runtime(temp_dir: Path) -> SimpleNamespace:
     logger = setup_logging()
     memory_store = MemoryStore(temp_dir / "memory.db")
     review_queue = ReviewQueue(memory_store)
+    state_contracts = ScreenContractRegistry.from_file(root / "registry" / "screen_contracts.json")
+    state_detector = StateDetector(state_contracts)
     desktop_controller = WindowsDesktopController(dry_run=True)
     browser_controller = PlaywrightBrowserController(
         dry_run=True,
@@ -50,7 +56,7 @@ def build_runtime(temp_dir: Path) -> SimpleNamespace:
         vision_capture_controller,
         vision_ocr_controller,
     )
-    validator = Validator(observer, file_controller)
+    validator = Validator(observer, file_controller, state_detector)
     executor = Executor(
         desktop_controller,
         browser_controller,
@@ -58,6 +64,7 @@ def build_runtime(temp_dir: Path) -> SimpleNamespace:
         memory_store,
         vision_capture_controller,
         vision_ocr_controller,
+        state_detector,
     )
     recovery_engine = RecoveryEngine(
         ErrorSignatureRegistry.from_file(root / "registry" / "error_signatures.json")
@@ -94,6 +101,8 @@ def build_runtime(temp_dir: Path) -> SimpleNamespace:
         engine,
         assistant,
     )
+    training_store = ScreenTemplateStore(temp_dir / "training")
+    screen_model = ScreenModel()
     return SimpleNamespace(
         root=root,
         base_dir=root,
@@ -107,4 +116,8 @@ def build_runtime(temp_dir: Path) -> SimpleNamespace:
         assistant=assistant,
         operator_session_manager=operator_session_manager,
         operator_exception_queue=operator_exception_queue,
+        training_store=training_store,
+        screen_model=screen_model,
+        state_contracts=state_contracts,
+        state_detector=state_detector,
     )

@@ -19,6 +19,8 @@ from core.observer import Observer
 from core.recovery import ErrorSignatureRegistry, RecoveryEngine
 from core.review_queue import ReviewQueue
 from core.safety import SafetyGate
+from core.state_contracts import ScreenContractRegistry
+from core.state_detector import StateDetector
 from core.validator import Validator
 from core.workflow_engine import WorkflowEngine, WorkflowRepository
 from core.models import RunControl
@@ -48,6 +50,8 @@ class OfficeAgentTkApp:
         data_dir = base_dir / "data"
         memory_store = MemoryStore(data_dir / "memory.db")
         review_queue = ReviewQueue(memory_store)
+        state_contracts = ScreenContractRegistry.from_file(base_dir / "registry" / "screen_contracts.json")
+        state_detector = StateDetector(state_contracts)
         desktop_controller = WindowsDesktopController(dry_run=True)
         browser_controller = PlaywrightBrowserController(
             dry_run=True,
@@ -63,7 +67,7 @@ class OfficeAgentTkApp:
             vision_capture_controller,
             vision_ocr_controller,
         )
-        validator = Validator(observer, file_controller)
+        validator = Validator(observer, file_controller, state_detector)
         executor = Executor(
             desktop_controller,
             browser_controller,
@@ -71,6 +75,7 @@ class OfficeAgentTkApp:
             memory_store,
             vision_capture_controller,
             vision_ocr_controller,
+            state_detector,
         )
         recovery_engine = RecoveryEngine(
             ErrorSignatureRegistry.from_file(base_dir / "registry" / "error_signatures.json")
@@ -89,7 +94,16 @@ class OfficeAgentTkApp:
             review_queue,
             logger,
         )
-        return RuntimeServices(base_dir, registry, workflows, engine, memory_store, review_queue)
+        return RuntimeServices(
+            base_dir=base_dir,
+            registry=registry,
+            workflows=workflows,
+            engine=engine,
+            memory_store=memory_store,
+            review_queue=review_queue,
+            state_contracts=state_contracts,
+            state_detector=state_detector,
+        )
 
     def _build_layout(self) -> None:
         container = ttk.Frame(self.root, padding=16)

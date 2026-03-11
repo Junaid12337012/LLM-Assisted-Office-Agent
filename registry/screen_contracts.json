@@ -1,0 +1,75 @@
+{
+  "contracts": [
+    {
+      "app_name": "voucher_app",
+      "screen_id": "dashboard",
+      "window_title_contains": ["Entry", "Manager"],
+      "required_controls": [
+        {"name": "VoucherMenu", "type": "MenuItem"},
+        {"name": "EntriesGrid", "type": "DataGrid"}
+      ],
+      "required_texts": ["Workspace loaded", "Voucher"],
+      "actions": ["goto_voucher_list", "check_entries"],
+      "transitions": {
+        "goto_voucher_list": "voucher_list"
+      }
+    },
+    {
+      "app_name": "voucher_app",
+      "screen_id": "voucher_list",
+      "window_title_contains": ["Voucher", "List"],
+      "required_controls": [
+        {"name": "From Date", "type": "Edit"},
+        {"name": "To Date", "type": "Edit"},
+        {"name": "LoadButton", "type": "Button"},
+        {"name": "PrintButton", "type": "Button"}
+      ],
+      "required_texts": ["Voucher", "Print"],
+      "actions": ["set_date_range", "load_vouchers", "print_vouchers"],
+      "transitions": {
+        "print_vouchers": "print_dialog"
+      }
+    },
+    {
+      "app_name": "voucher_app",
+      "screen_id": "print_dialog",
+      "window_title_contains": ["Print", "Dialog"],
+      "required_controls": [
+        {"name": "ConfirmPrintButton", "type": "Button"},
+        {"name": "CancelPrintButton", "type": "Button"}
+      ],
+      "required_texts": ["Print vouchers", "Confirm"],
+      "actions": ["confirm_print", "cancel_print"],
+      "transitions": {
+        "confirm_print": "print_success",
+        "cancel_print": "voucher_list"
+      }
+    },
+    {
+      "app_name": "voucher_app",
+      "screen_id": "print_success",
+      "window_title_contains": ["Print", "Success"],
+      "required_controls": [
+        {"name": "CloseButton", "type": "Button"}
+      ],
+      "required_texts": ["Printed successfully"],
+      "actions": ["close_success"],
+      "transitions": {}
+    },
+    {
+      "app_name": "voucher_app",
+      "screen_id": "print_error",
+      "window_title_contains": ["Print", "Error"],
+      "required_controls": [
+        {"name": "RetryButton", "type": "Button"},
+        {"name": "CancelButton", "type": "Button"}
+      ],
+      "required_texts": ["Print failed"],
+      "actions": ["retry_print", "cancel_print"],
+      "transitions": {
+        "retry_print": "print_dialog",
+        "cancel_print": "voucher_list"
+      }
+    }
+  ]
+}

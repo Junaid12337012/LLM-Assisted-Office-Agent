@@ -197,6 +197,12 @@ class ToolRegistry:
                 return f"data/evidence/exports/end_of_day_{today}.json"
             case "portal.upload_latest_file::source_dir":
                 return "data/evidence/exports"
+            case "desktop.print_today_vouchers::app_name":
+                return "voucher_app"
+            case "desktop.print_today_vouchers::date_from":
+                return "today"
+            case "desktop.print_today_vouchers::date_to":
+                return "today"
             case "phase2.read_invoice_id::result_path":
                 image_path = existing_values.get("image_path")
                 if not image_path:

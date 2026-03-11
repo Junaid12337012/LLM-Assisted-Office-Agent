@@ -8,9 +8,10 @@ from core.utils import render_template
 
 
 class Validator:
-    def __init__(self, observer: Any, file_controller: Any) -> None:
+    def __init__(self, observer: Any, file_controller: Any, state_detector: Any | None = None) -> None:
         self.observer = observer
         self.file_controller = file_controller
+        self.state_detector = state_detector
 
     def evaluate_rules(
         self,
@@ -105,6 +106,39 @@ class Validator:
             if left == right:
                 return ValidationResult(True, f"'{left}' equals '{right}'.")
             return ValidationResult(False, f"'{left}' does not equal '{right}'.", rule.on_fail.recover_with)
+
+        if kind == "data.numeric_min":
+            value_text = str(args.get("value") or "0")
+            minimum_text = str(args.get("min") or "0")
+            try:
+                value = float(value_text)
+                minimum = float(minimum_text)
+            except ValueError:
+                return ValidationResult(
+                    False,
+                    f"Could not compare numeric values '{value_text}' and '{minimum_text}'.",
+                    rule.on_fail.recover_with,
+                )
+            if value >= minimum:
+                return ValidationResult(True, f"{value} >= {minimum}.")
+            return ValidationResult(False, f"{value} < {minimum}.", rule.on_fail.recover_with)
+
+        if kind == "state.screen_is":
+            expected = str(args.get("screen_id") or "")
+            app_name = str(args.get("app_name") or "") or None
+            current_screen = str(context.get("current_screen_id") or "")
+            confidence = float(context.get("current_screen_confidence") or 0.0)
+            if self.state_detector is not None:
+                detection = self.state_detector.detect(snapshot["desktop"], app_name=app_name)
+                current_screen = str(detection.get("current_screen_id") or current_screen)
+                confidence = float(detection.get("current_screen_confidence") or confidence)
+            if current_screen == expected:
+                return ValidationResult(True, f"Detected state '{expected}' with confidence {confidence}.")
+            return ValidationResult(
+                False,
+                f"Detected state '{current_screen or 'unknown'}' instead of '{expected}'.",
+                rule.on_fail.recover_with,
+            )
 
         if kind == "vision.ocr_confidence_min":
             minimum = float(args.get("min_confidence") or 0.0)

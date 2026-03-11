@@ -83,7 +83,6 @@ class SafetyGate:
             window_title = str(
                 resolved_args.get("window_title")
                 or resolved_args.get("app")
-                or resolved_args.get("target")
                 or ""
             )
             if allowed_apps and window_title and window_title not in allowed_apps:

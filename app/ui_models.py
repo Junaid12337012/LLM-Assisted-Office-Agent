@@ -16,6 +16,10 @@ class RuntimeServices:
     assistant: Any | None = None
     operator_session_manager: Any | None = None
     operator_exception_queue: Any | None = None
+    training_store: Any | None = None
+    screen_model: Any | None = None
+    state_contracts: Any | None = None
+    state_detector: Any | None = None
 
 
 @dataclass(slots=True)

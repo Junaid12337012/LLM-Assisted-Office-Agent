@@ -132,6 +132,12 @@ def _assistant_outcome(
     }
 
 
+def _parse_json_arg(raw_value: str, *, default: Any) -> Any:
+    if not raw_value:
+        return default
+    return json.loads(raw_value)
+
+
 def _serialize_session_payload(details: dict[str, Any]) -> dict[str, Any]:
     return {
         "session": details["session"],
@@ -445,6 +451,84 @@ def command_operator_resolve_exception(args: argparse.Namespace) -> dict[str, An
     return {"exception": item}
 
 
+def command_training_capture(args: argparse.Namespace) -> dict[str, Any]:
+    services = build_services()
+    if services.training_store is None:
+        raise SystemExit("Training store is not available.")
+    controller = getattr(services.engine.executor, "vision_capture_controller", None)
+    if controller is None:
+        raise SystemExit("Vision capture controller is not available.")
+    capture_path = args.path or str(
+        services.training_store.build_capture_path(
+            args.app_name or "desktop_app",
+            args.screen_name or "screen",
+        )
+    )
+    result = controller.perform(
+        "vision.capture_screenshot",
+        {
+            "path": capture_path,
+            "left": args.left,
+            "top": args.top,
+            "width": args.width,
+            "height": args.height,
+        },
+    )
+    return {
+        "capture": {
+            "success": result.success,
+            "message": result.message,
+            "path": result.data.get("screenshot_path"),
+            "capture_area": result.data.get("capture_area"),
+        }
+    }
+
+
+def command_training_save_template(args: argparse.Namespace) -> dict[str, Any]:
+    services = build_services()
+    if services.training_store is None:
+        raise SystemExit("Training store is not available.")
+    template = services.training_store.save_template(
+        app_name=args.app_name,
+        screen_name=args.screen_name,
+        window_title=args.window_title,
+        capture_path=args.capture_path,
+        regions=_parse_json_arg(args.regions_json, default=[]),
+        expected_controls=_parse_json_arg(args.expected_controls_json, default=[]),
+        expected_texts=_parse_json_arg(args.expected_texts_json, default=[]),
+        notes=args.notes,
+        template_id=args.template_id or None,
+    )
+    return {"template": template}
+
+
+def command_training_list_templates(args: argparse.Namespace) -> dict[str, Any]:
+    services = build_services()
+    if services.training_store is None:
+        raise SystemExit("Training store is not available.")
+    return {"templates": services.training_store.list_templates(app_name=args.app_name or None)}
+
+
+def command_training_get_template(args: argparse.Namespace) -> dict[str, Any]:
+    services = build_services()
+    if services.training_store is None:
+        raise SystemExit("Training store is not available.")
+    template = services.training_store.get_template(args.template_id)
+    if template is None:
+        raise SystemExit(f"Template {args.template_id} was not found.")
+    return {"template": template}
+
+
+def command_training_analyze_screen(args: argparse.Namespace) -> dict[str, Any]:
+    services = build_services()
+    if services.training_store is None or services.screen_model is None:
+        raise SystemExit("Training analyzer is not available.")
+    templates = services.training_store.list_templates(app_name=args.app_name or None)
+    snapshot = services.engine.executor.desktop_controller.snapshot()
+    analysis = services.screen_model.analyze(snapshot, templates, app_name=args.app_name or None)
+    return {"analysis": analysis}
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Desktop backend bridge for the office automation platform.")
     subparsers = parser.add_subparsers(dest="subcommand", required=True)
@@ -544,6 +628,40 @@ def build_parser() -> argparse.ArgumentParser:
     operator_resolve_parser.add_argument("--resolution", required=True)
     operator_resolve_parser.add_argument("--notes", default="")
     operator_resolve_parser.set_defaults(handler=command_operator_resolve_exception)
+
+    training_capture_parser = subparsers.add_parser("training-capture-screen", help="Capture a real desktop screenshot for screen training.")
+    training_capture_parser.add_argument("--app-name", default="desktop_app")
+    training_capture_parser.add_argument("--screen-name", default="screen")
+    training_capture_parser.add_argument("--path", default="")
+    training_capture_parser.add_argument("--left", type=int, default=0)
+    training_capture_parser.add_argument("--top", type=int, default=0)
+    training_capture_parser.add_argument("--width", type=int, default=0)
+    training_capture_parser.add_argument("--height", type=int, default=0)
+    training_capture_parser.set_defaults(handler=command_training_capture)
+
+    training_save_parser = subparsers.add_parser("training-save-template", help="Save a labeled screen template.")
+    training_save_parser.add_argument("--template-id", default="")
+    training_save_parser.add_argument("--app-name", required=True)
+    training_save_parser.add_argument("--screen-name", required=True)
+    training_save_parser.add_argument("--window-title", default="")
+    training_save_parser.add_argument("--capture-path", default="")
+    training_save_parser.add_argument("--regions-json", default="[]")
+    training_save_parser.add_argument("--expected-controls-json", default="[]")
+    training_save_parser.add_argument("--expected-texts-json", default="[]")
+    training_save_parser.add_argument("--notes", default="")
+    training_save_parser.set_defaults(handler=command_training_save_template)
+
+    training_list_parser = subparsers.add_parser("training-list-templates", help="List saved screen templates.")
+    training_list_parser.add_argument("--app-name", default="")
+    training_list_parser.set_defaults(handler=command_training_list_templates)
+
+    training_get_parser = subparsers.add_parser("training-get-template", help="Load one saved screen template.")
+    training_get_parser.add_argument("--template-id", required=True)
+    training_get_parser.set_defaults(handler=command_training_get_template)
+
+    training_analyze_parser = subparsers.add_parser("training-analyze-screen", help="Analyze the current desktop snapshot against taught templates.")
+    training_analyze_parser.add_argument("--app-name", default="")
+    training_analyze_parser.set_defaults(handler=command_training_analyze_screen)
 
     return parser
 

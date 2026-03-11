@@ -34,6 +34,7 @@ class InstructionInterpreter:
             "browser.download_daily_report": {"browser", "download", "report", "daily"},
             "portal.upload_latest_file": {"upload", "portal", "latest", "file", "submit"},
             "desktop.check_entries": {"check", "entry", "entries", "pending", "exceptions"},
+            "desktop.print_today_vouchers": {"print", "voucher", "vouchers", "today", "date"},
             "reports.end_of_day_summary": {"summary", "export", "report", "day"},
             "phase2.read_invoice_id": {"invoice", "ocr", "image", "read", "extract", "document"},
         }
@@ -55,6 +56,7 @@ class InstructionInterpreter:
             self._maybe_bundle,
             self._maybe_note,
             self._maybe_invoice,
+            self._maybe_print_vouchers,
             self._best_single_command,
         ):
             plan = resolver(raw_instruction, normalized)
@@ -189,6 +191,34 @@ class InstructionInterpreter:
                 )
             ],
             confidence=confidence,
+            explanation=explanation,
+        )
+
+    def _maybe_print_vouchers(self, instruction: str, normalized: str) -> AssistantPlan | None:
+        tokens = set(normalized.split())
+        if "print" not in tokens or not ({"voucher", "vouchers"} & tokens):
+            return None
+
+        provided = {"app_name": "voucher_app"}
+        if "today" in tokens:
+            provided["date_from"] = "today"
+            provided["date_to"] = "today"
+
+        explanation = "Matched the voucher-print state-machine workflow and set the date range for today's vouchers."
+        if "today" not in tokens:
+            explanation = "Matched the voucher-print workflow, but the date range should be reviewed before running."
+
+        return self._build_plan(
+            instruction=instruction,
+            normalized=normalized,
+            command_specs=[
+                (
+                    "desktop.print_today_vouchers",
+                    provided,
+                    "Navigate to the voucher list, apply the date range, load vouchers, and confirm printing.",
+                )
+            ],
+            confidence=0.92 if "today" in tokens else 0.7,
             explanation=explanation,
         )
 

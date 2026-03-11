@@ -1,0 +1,188 @@
+{
+  "id": "print_today_vouchers",
+  "version": "1.0",
+  "inputs": {
+    "app_name": "voucher_app",
+    "date_from": "today",
+    "date_to": "today",
+    "min_voucher_rows": 1
+  },
+  "preconditions": [
+    "Desktop app is open and reachable.",
+    "Voucher screens are registered in the screen contract registry."
+  ],
+  "steps": [
+    {
+      "step_id": "detect_current_screen",
+      "action": {
+        "type": "state.detect_screen",
+        "args": {
+          "app_name": "{app_name}"
+        }
+      },
+      "validate": [
+        {
+          "kind": "data.non_empty",
+          "args": {
+            "value": "{current_screen_id}"
+          }
+        }
+      ],
+      "branch": [
+        {
+          "if": {
+            "kind": "data.equals",
+            "args": {
+              "left": "{current_screen_id}",
+              "right": "voucher_list"
+            }
+          },
+          "goto_step": "set_today_range"
+        },
+        {
+          "if": {
+            "kind": "data.equals",
+            "args": {
+              "left": "{current_screen_id}",
+              "right": "print_dialog"
+            }
+          },
+          "goto_step": "confirm_print_dialog"
+        },
+        {
+          "if": {
+            "kind": "data.equals",
+            "args": {
+              "left": "{current_screen_id}",
+              "right": "print_success"
+            }
+          },
+          "goto_step": "finish_on_success"
+        }
+      ]
+    },
+    {
+      "step_id": "goto_voucher_list",
+      "action": {
+        "type": "desktop.goto_screen",
+        "args": {
+          "screen_id": "voucher_list"
+        }
+      },
+      "validate": [
+        {
+          "kind": "state.screen_is",
+          "args": {
+            "app_name": "{app_name}",
+            "screen_id": "voucher_list"
+          }
+        }
+      ]
+    },
+    {
+      "step_id": "set_today_range",
+      "action": {
+        "type": "desktop.set_date_range",
+        "args": {
+          "date_from": "{date_from}",
+          "date_to": "{date_to}"
+        }
+      },
+      "validate": [
+        {
+          "kind": "data.equals",
+          "args": {
+            "left": "{applied_date_from}",
+            "right": "{date_from}"
+          }
+        },
+        {
+          "kind": "data.equals",
+          "args": {
+            "left": "{applied_date_to}",
+            "right": "{date_to}"
+          }
+        }
+      ]
+    },
+    {
+      "step_id": "load_voucher_rows",
+      "action": {
+        "type": "desktop.load_vouchers",
+        "args": {}
+      },
+      "validate": [
+        {
+          "kind": "data.numeric_min",
+          "args": {
+            "value": "{voucher_row_count}",
+            "min": "{min_voucher_rows}"
+          }
+        }
+      ]
+    },
+    {
+      "step_id": "open_print_dialog",
+      "action": {
+        "type": "desktop.click_named_control",
+        "args": {
+          "target": "print_button"
+        }
+      },
+      "validate": [
+        {
+          "kind": "state.screen_is",
+          "args": {
+            "app_name": "{app_name}",
+            "screen_id": "print_dialog"
+          }
+        }
+      ]
+    },
+    {
+      "step_id": "confirm_print_dialog",
+      "action": {
+        "type": "desktop.click_named_control",
+        "args": {
+          "target": "confirm_print_button"
+        }
+      },
+      "validate": [
+        {
+          "kind": "state.screen_is",
+          "args": {
+            "app_name": "{app_name}",
+            "screen_id": "print_success"
+          }
+        }
+      ]
+    },
+    {
+      "step_id": "finish_on_success",
+      "action": {
+        "type": "state.detect_screen",
+        "args": {
+          "app_name": "{app_name}"
+        }
+      },
+      "validate": [
+        {
+          "kind": "state.screen_is",
+          "args": {
+            "app_name": "{app_name}",
+            "screen_id": "print_success"
+          }
+        }
+      ]
+    }
+  ],
+  "success_criteria": [
+    {
+      "kind": "state.screen_is",
+      "args": {
+        "app_name": "{app_name}",
+        "screen_id": "print_success"
+      }
+    }
+  ]
+}

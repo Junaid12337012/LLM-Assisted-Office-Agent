@@ -10,9 +10,11 @@ $repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $repoRoot
 $python = Join-Path $repoRoot '.tools\python311\runtime\python.exe'
 $backend = Join-Path $repoRoot 'desktop_backend.py'
+$trainingScript = Join-Path $repoRoot 'training_mode.ps1'
 
 if (-not (Test-Path $python)) { throw "Portable Python runtime not found at $python" }
 if (-not (Test-Path $backend)) { throw "Desktop backend not found at $backend" }
+if (-not (Test-Path $trainingScript)) { throw "Training mode script not found at $trainingScript" }
 
 function Invoke-BackendJson {
     param([string[]]$Arguments)
@@ -104,6 +106,9 @@ function Get-ParameterDefault {
         'mvp.end_day::run_date' { return $today }
         'mvp.end_day::summary_output' { return "data/evidence/exports/end_of_day_$today.json" }
         'portal.upload_latest_file::source_dir' { return 'data/evidence/exports' }
+        'desktop.print_today_vouchers::app_name' { return 'voucher_app' }
+        'desktop.print_today_vouchers::date_from' { return 'today' }
+        'desktop.print_today_vouchers::date_to' { return 'today' }
         default { return $null }
     }
 }
@@ -120,6 +125,7 @@ function Resolve-AgentShortcut {
         'start day' { return 'run mvp.start_day' }
         'download report' { return 'run mvp.download_report' }
         'end day' { return 'run mvp.end_day' }
+        'print all today voucher' { return 'run desktop.print_today_vouchers app_name=voucher_app date_from=today date_to=today' }
         default { }
     }
     if ($trimmed -match '^(?:note|quick note)\s+(.+)$') {
@@ -202,6 +208,8 @@ if ($SelfTest) {
     if ((Complete-AgentCommand -InputText 'note finish invoices') -notmatch '^run mvp\.note run_date=\d{4}-\d{2}-\d{2} note_text="finish invoices" note_title="Quick Note" note_path=') { throw 'note resolution failed.' }
     if ((Complete-AgentCommand -InputText 'download report') -notmatch '^run mvp\.download_report run_date=\d{4}-\d{2}-\d{2} download_dir=data/evidence/exports export_dir=data/evidence/exports$') { throw 'download report resolution failed.' }
     if ((Complete-AgentCommand -InputText 'end day') -notmatch '^run mvp\.end_day run_date=\d{4}-\d{2}-\d{2} summary_output=data/evidence/exports/end_of_day_\d{4}-\d{2}-\d{2}\.json$') { throw 'end day resolution failed.' }
+    $trainingTemplates = Invoke-BackendJson -Arguments @('training-list-templates')
+    if ($null -eq $trainingTemplates) { throw 'training backend unavailable.' }
     $assistantPlan = Get-AssistantPlanPayload -Instruction "start today's office work"
     if ($assistantPlan.plan.commands.Count -lt 3) { throw 'assistant planning failed.' }
     $operatorSession = Invoke-BackendJson -Arguments @('operator-create-session', '--instruction', "start today's office work")
@@ -980,6 +988,14 @@ $operatorDashboardButton.Location = New-Object System.Drawing.Point($(if ($scrip
 $operatorDashboardButton.Anchor = 'Top,Right'
 Set-SecondaryButtonStyle -Button $operatorDashboardButton
 [void]$runsHeaderPanel.Controls.Add($operatorDashboardButton)
+
+$trainingModeButton = New-Object System.Windows.Forms.Button
+$trainingModeButton.Text = if ($script:isCompactLayout) { 'Teach' } else { 'Training' }
+$trainingModeButton.Size = New-Object System.Drawing.Size($(if ($script:isCompactLayout) { 72 } else { 78 }), 30)
+$trainingModeButton.Location = New-Object System.Drawing.Point($(if ($script:isCompactLayout) { 46 } else { 0 }), 4)
+$trainingModeButton.Anchor = 'Top,Right'
+Set-SecondaryButtonStyle -Button $trainingModeButton
+[void]$runsHeaderPanel.Controls.Add($trainingModeButton)
 
 $runsFilterLayout = New-Object System.Windows.Forms.TableLayoutPanel
 $runsFilterLayout.Dock = 'Fill'
@@ -2485,6 +2501,10 @@ $reviewQueueButton.Add_Click({
 $operatorDashboardButton.Add_Click({
     Show-OperatorDashboardDialog
     Load-Runs
+})
+$trainingModeButton.Add_Click({
+    Start-Process powershell -ArgumentList @('-ExecutionPolicy', 'Bypass', '-File', $trainingScript) | Out-Null
+    Set-StatusText -Text 'Training mode opened.' -Color $theme.Success
 })
 $artifactComboBox.Add_SelectedIndexChanged({
     $enabled = ($script:artifactComboBox.SelectedIndex -ge 0)

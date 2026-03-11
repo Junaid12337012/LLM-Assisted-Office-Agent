@@ -49,6 +49,17 @@ class PhaseThreeAssistantTests(unittest.TestCase):
             self.assertEqual("needs_clarification", plan.status)
             self.assertIn("phase2.read_invoice_id.image_path", plan.missing_parameters)
 
+    def test_print_today_voucher_instruction_maps_to_state_machine_workflow(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            runtime = build_runtime(Path(temp_dir))
+
+            plan = runtime.assistant.plan("print all today voucher")
+
+            self.assertEqual("needs_confirmation", plan.status)
+            self.assertEqual("desktop.print_today_vouchers", plan.commands[0].command_name)
+            self.assertEqual("today", plan.commands[0].inputs["date_from"])
+            self.assertEqual("today", plan.commands[0].inputs["date_to"])
+
     def test_execute_assistant_plan_runs_multi_step_sequence(self) -> None:
         with TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)

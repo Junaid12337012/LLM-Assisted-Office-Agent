@@ -21,6 +21,7 @@ class Executor:
         memory_store: Any,
         vision_capture_controller: Any | None = None,
         vision_ocr_controller: Any | None = None,
+        state_detector: Any | None = None,
     ) -> None:
         self.desktop_controller = desktop_controller
         self.browser_controller = browser_controller
@@ -28,6 +29,7 @@ class Executor:
         self.memory_store = memory_store
         self.vision_capture_controller = vision_capture_controller
         self.vision_ocr_controller = vision_ocr_controller
+        self.state_detector = state_detector
 
     def resolve_args(self, action: ActionDefinition, context: dict[str, Any]) -> dict[str, Any]:
         return dict(render_template(action.args, context))
@@ -48,6 +50,21 @@ class Executor:
 
         if action.type.startswith("files."):
             return self.file_controller.perform(action.type, args)
+
+        if action.type == "state.detect_screen":
+            if self.state_detector is None:
+                return ActionResult(False, "State detector is not configured.")
+            detection = self.state_detector.detect(
+                self.desktop_controller.snapshot(),
+                app_name=str(args.get("app_name") or "") or None,
+            )
+            success = detection["status"] == "matched"
+            message = (
+                f"Detected screen '{detection['current_screen_id']}'."
+                if success
+                else "Could not match the current screen to a known contract."
+            )
+            return ActionResult(success, message, data=detection)
 
         if action.type == "vision.capture_screenshot" and self.vision_capture_controller is not None:
             return self.vision_capture_controller.perform(action.type, args)

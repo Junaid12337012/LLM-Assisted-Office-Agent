@@ -16,6 +16,8 @@ from core.observer import Observer
 from core.recovery import ErrorSignatureRegistry, RecoveryEngine
 from core.review_queue import ReviewQueue
 from core.safety import SafetyGate
+from core.state_contracts import ScreenContractRegistry
+from core.state_detector import StateDetector
 from core.validator import Validator
 from core.workflow_engine import WorkflowEngine, WorkflowRepository
 from llm.confidence import ConfidencePolicy
@@ -27,6 +29,8 @@ from operator_runtime.exception_queue import OperatorExceptionQueue
 from operator_runtime.session_manager import SessionManager
 from operator_runtime.summary_manager import SummaryManager
 from operator_runtime.task_queue import TaskQueue
+from training.screen_model import ScreenModel
+from training.template_store import ScreenTemplateStore
 
 
 
@@ -36,6 +40,8 @@ def build_services(base_dir: Path | None = None) -> RuntimeServices:
     data_dir = resolved_base / "data"
     memory_store = MemoryStore(data_dir / "memory.db")
     review_queue = ReviewQueue(memory_store)
+    state_contracts = ScreenContractRegistry.from_file(resolved_base / "registry" / "screen_contracts.json")
+    state_detector = StateDetector(state_contracts)
     desktop_controller = WindowsDesktopController(dry_run=False)
     browser_controller = PlaywrightBrowserController(
         dry_run=False,
@@ -51,7 +57,7 @@ def build_services(base_dir: Path | None = None) -> RuntimeServices:
         vision_capture_controller,
         vision_ocr_controller,
     )
-    validator = Validator(observer, file_controller)
+    validator = Validator(observer, file_controller, state_detector)
     executor = Executor(
         desktop_controller,
         browser_controller,
@@ -59,6 +65,7 @@ def build_services(base_dir: Path | None = None) -> RuntimeServices:
         memory_store,
         vision_capture_controller,
         vision_ocr_controller,
+        state_detector,
     )
     recovery_engine = RecoveryEngine(
         ErrorSignatureRegistry.from_file(resolved_base / "registry" / "error_signatures.json")
@@ -95,15 +102,21 @@ def build_services(base_dir: Path | None = None) -> RuntimeServices:
         engine,
         assistant,
     )
+    training_store = ScreenTemplateStore(data_dir / "training")
+    screen_model = ScreenModel()
     return RuntimeServices(
-        resolved_base,
-        registry,
-        workflows,
-        engine,
-        memory_store,
-        review_queue,
-        assistant,
-        operator_session_manager,
-        operator_exception_queue,
+        base_dir=resolved_base,
+        registry=registry,
+        workflows=workflows,
+        engine=engine,
+        memory_store=memory_store,
+        review_queue=review_queue,
+        assistant=assistant,
+        operator_session_manager=operator_session_manager,
+        operator_exception_queue=operator_exception_queue,
+        training_store=training_store,
+        screen_model=screen_model,
+        state_contracts=state_contracts,
+        state_detector=state_detector,
     )
 

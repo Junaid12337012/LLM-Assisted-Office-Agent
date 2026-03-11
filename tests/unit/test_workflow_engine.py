@@ -198,6 +198,28 @@ class WorkflowEngineTests(unittest.TestCase):
             self.assertEqual("phase2_read_invoice_id", items[0]["workflow_id"])
             self.assertTrue(items[0]["evidence_path"])
 
+    def test_print_today_vouchers_workflow_runs_through_state_machine(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            runtime = build_runtime(temp_path)
+            command = runtime.registry.get("desktop.print_today_vouchers")
+
+            outcome = runtime.engine.run(
+                command,
+                {
+                    "app_name": "voucher_app",
+                    "date_from": "today",
+                    "date_to": "today",
+                },
+                safe_mode=False,
+                confirmation_handler=lambda _message: True,
+            )
+
+            self.assertEqual(outcome.status, "completed")
+            run = runtime.memory_store.get_run(outcome.run_id)
+            self.assertEqual("desktop.print_today_vouchers", run["command_name"])
+            self.assertIn("confirm_print_dialog", outcome.completed_steps)
+
 
 if __name__ == "__main__":
     unittest.main()
