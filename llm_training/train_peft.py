@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import sys
 from pathlib import Path
@@ -20,6 +21,30 @@ def _load_jsonl(path: Path) -> list[dict[str, Any]]:
             continue
         rows.append(json.loads(raw_line))
     return rows
+
+
+def _load_many_jsonl(paths: list[Path]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for path in paths:
+        rows.extend(_load_jsonl(path))
+    return rows
+
+
+def _import_hf_dataset_class() -> Any:
+    repo_path = str(REPO_ROOT)
+    removed = False
+    if repo_path in sys.path:
+        sys.path.remove(repo_path)
+        removed = True
+    try:
+        datasets_module = importlib.import_module("datasets")
+    finally:
+        if removed:
+            sys.path.insert(0, repo_path)
+    dataset_class = getattr(datasets_module, "Dataset", None)
+    if dataset_class is None:
+        raise RuntimeError("Hugging Face 'datasets' package is installed incorrectly or shadowed.")
+    return dataset_class
 
 
 def _format_messages(messages: list[dict[str, str]]) -> str:
@@ -68,6 +93,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Fine-tune a local planning model with Transformers + PEFT.")
     parser.add_argument("--base-model", required=True)
     parser.add_argument("--train-file", default="datasets/local_agent_train.jsonl")
+    parser.add_argument("--extra-train-file", action="append", default=[])
     parser.add_argument("--eval-file", default="datasets/local_agent_eval.jsonl")
     parser.add_argument("--output-dir", default="artifacts/local_agent_adapter")
     parser.add_argument("--epochs", "--num-train-epochs", dest="epochs", type=float, default=3.0)
@@ -83,17 +109,19 @@ def main() -> None:
     parser.add_argument("--max-eval-samples", type=int, default=0)
     parser.add_argument("--save-strategy", choices=["epoch", "no"], default="epoch")
     parser.add_argument("--eval-strategy", choices=["epoch", "no"], default="epoch")
+    parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
 
-    train_path = Path(args.train_file)
+    train_paths = [Path(args.train_file)] + [Path(item) for item in args.extra_train_file]
     eval_path = Path(args.eval_file)
-    train_errors = validate_jsonl_file(train_path)
+    train_errors: list[str] = []
+    for train_path in train_paths:
+        train_errors.extend(validate_jsonl_file(train_path))
     eval_errors = validate_jsonl_file(eval_path)
     all_errors = train_errors + eval_errors
     if all_errors:
         raise SystemExit("\n".join(all_errors))
 
-    from datasets import Dataset
     from peft import LoraConfig, get_peft_model
     import torch
     from transformers import (
@@ -103,8 +131,9 @@ def main() -> None:
         Trainer,
         TrainingArguments,
     )
+    Dataset = _import_hf_dataset_class()
 
-    train_examples = [_build_example(item) for item in _load_jsonl(train_path)]
+    train_examples = [_build_example(item) for item in _load_many_jsonl(train_paths)]
     eval_examples = [_build_example(item) for item in _load_jsonl(eval_path)]
     if args.max_train_samples > 0:
         train_examples = train_examples[: args.max_train_samples]
@@ -176,24 +205,30 @@ def main() -> None:
             use_cpu=use_cpu,
             dataloader_pin_memory=not use_cpu,
             remove_unused_columns=False,
+            seed=args.seed,
         ),
     )
 
-    trainer.train()
+    train_result = trainer.train()
+    eval_metrics = trainer.evaluate() if eval_dataset is not None and args.eval_strategy != "no" else {}
     trainer.save_model(str(output_dir))
     tokenizer.save_pretrained(str(output_dir))
     (output_dir / "training_manifest.json").write_text(
         json.dumps(
             {
                 "base_model": args.base_model,
-                "train_file": str(train_path),
+                "train_files": [str(path) for path in train_paths],
                 "eval_file": str(eval_path),
                 "epochs": args.epochs,
                 "learning_rate": args.learning_rate,
                 "batch_size": args.batch_size,
                 "gradient_accumulation_steps": args.grad_accumulation,
                 "max_length": args.max_length,
+                "train_examples": len(train_examples),
+                "eval_examples": len(eval_examples),
                 "target_modules": target_modules,
+                "train_metrics": train_result.metrics,
+                "eval_metrics": eval_metrics,
                 "lora": {
                     "r": args.lora_r,
                     "alpha": args.lora_alpha,

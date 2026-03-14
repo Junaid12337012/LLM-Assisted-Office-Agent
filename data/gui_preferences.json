@@ -1,9 +1,11 @@
 ﻿{
     "safe_mode":  false,
     "confirm_risky":  true,
+    "prefer_local_model":  true,
+    "read_screen_context":  true,
     "run_status":  "All",
     "run_search":  "",
-    "selected_command":  "browser.download_daily_report",
+    "selected_command":  "mvp.download_report",
     "last_input":  "download report",
     "window_width":  1358,
     "window_height":  720

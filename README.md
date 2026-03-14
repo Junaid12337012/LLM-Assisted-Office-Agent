@@ -102,6 +102,15 @@ powershell -ExecutionPolicy Bypass -File .\llm_training\smoke_train_tiny.ps1
 
 That writes a tiny LoRA adapter to `artifacts/local_agent_adapter_tiny`.
 
+You can now also capture approved plans as future training data:
+
+```powershell
+.\.tools\python311\runtime\python.exe .\desktop_backend.py capture-plan-feedback --instruction "print all today voucher" --local-model --with-screen
+.\.tools\python311\runtime\python.exe .\desktop_backend.py export-feedback-dataset --include-seed-dataset
+```
+
+That writes feedback examples to `data/feedback/local_agent_feedback.jsonl` and can merge them into a larger train set.
+
 ## Local server setup
 
 For this Windows CPU-only machine, the most practical local runtime is a very small model.
@@ -125,6 +134,12 @@ powershell -ExecutionPolicy Bypass -File .\llm_training\start_lm_studio_server.p
 ```
 
 If you do not set env vars manually, the local client now probes LM Studio first and then Ollama, and it picks the first live model it finds.
+
+To retrain from the merged seed + feedback dataset:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\llm_training\train_feedback_loop.ps1
+```
 
 ## Phase 4 foundation
 

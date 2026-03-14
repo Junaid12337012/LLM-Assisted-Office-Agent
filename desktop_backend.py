@@ -133,6 +133,10 @@ def _assistant_outcome(
     }
 
 
+def _default_feedback_dataset(base_dir: Path) -> Path:
+    return base_dir / "data" / "feedback" / "local_agent_feedback.jsonl"
+
+
 def _parse_json_arg(raw_value: str, *, default: Any) -> Any:
     if not raw_value:
         return default
@@ -141,6 +145,12 @@ def _parse_json_arg(raw_value: str, *, default: Any) -> Any:
 
 def _read_bool_env(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _build_feedback_store(base_dir: Path, raw_path: str = "") -> Any:
+    from llm_training.feedback_store import FeedbackStore
+
+    return FeedbackStore(raw_path or _default_feedback_dataset(base_dir))
 
 
 def _serialize_session_payload(details: dict[str, Any]) -> dict[str, Any]:
@@ -422,6 +432,87 @@ def command_local_agent_run(args: argparse.Namespace) -> dict[str, Any]:
     return payload
 
 
+def command_capture_plan_feedback(args: argparse.Namespace) -> dict[str, Any]:
+    services = build_services()
+    if args.local_model:
+        local_agent = _build_local_agent(services)
+        plan = local_agent.plan(
+            args.instruction,
+            include_screen=args.with_screen,
+            force_screenshot=args.force_screenshot,
+        )
+        screen_context = local_agent.last_screen_context
+    else:
+        if services.assistant is None:
+            raise SystemExit("Assistant planner is not available.")
+        plan = services.assistant.plan(args.instruction)
+        screen_context = {}
+
+    store = _build_feedback_store(services.base_dir, args.dataset_file)
+    record = store.save_feedback(
+        instruction=args.instruction,
+        approved_plan=plan.to_dict(),
+        screen_context=screen_context,
+        source_plan=plan.to_dict(),
+        notes=args.notes,
+        origin="local-model" if args.local_model else "heuristic",
+    )
+    return {
+        "record": record,
+        "dataset_file": str(store.path),
+    }
+
+
+def command_save_plan_feedback(args: argparse.Namespace) -> dict[str, Any]:
+    services = build_services()
+    plan_payload = _parse_json_arg(args.plan_json, default={})
+    if not isinstance(plan_payload, dict):
+        raise SystemExit("--plan-json must decode to a JSON object.")
+
+    approved_payload = plan_payload
+    if args.approved_plan_json:
+        approved_payload = _parse_json_arg(args.approved_plan_json, default={})
+        if not isinstance(approved_payload, dict):
+            raise SystemExit("--approved-plan-json must decode to a JSON object.")
+
+    screen_context = _parse_json_arg(args.screen_context_json, default={})
+    if not isinstance(screen_context, dict):
+        raise SystemExit("--screen-context-json must decode to a JSON object.")
+
+    store = _build_feedback_store(services.base_dir, args.dataset_file)
+    record = store.save_feedback(
+        instruction=args.instruction,
+        approved_plan=approved_payload,
+        screen_context=screen_context,
+        source_plan=plan_payload,
+        notes=args.notes,
+        origin=args.origin,
+    )
+    return {
+        "record": record,
+        "dataset_file": str(store.path),
+    }
+
+
+def command_export_feedback_dataset(args: argparse.Namespace) -> dict[str, Any]:
+    services = build_services()
+    store = _build_feedback_store(services.base_dir, args.dataset_file)
+    base_files: list[str] = []
+    if args.include_seed_dataset:
+        base_files.append(str(services.base_dir / "datasets" / "local_agent_train.jsonl"))
+    records = store.export_dataset(
+        args.output_file,
+        base_files=base_files,
+        dedupe=not args.keep_duplicates,
+    )
+    return {
+        "output_file": str(Path(args.output_file)),
+        "record_count": len(records),
+        "included_seed_dataset": args.include_seed_dataset,
+        "feedback_file": str(store.path),
+    }
+
+
 def command_operator_dashboard(args: argparse.Namespace) -> dict[str, Any]:
     services = build_services()
     if services.operator_session_manager is None:
@@ -684,6 +775,32 @@ def build_parser() -> argparse.ArgumentParser:
     local_run_parser.add_argument("--confirm-risky", action="store_true")
     local_run_parser.add_argument("--confirm-plan", action="store_true")
     local_run_parser.set_defaults(handler=command_local_agent_run)
+
+    capture_feedback_parser = subparsers.add_parser("capture-plan-feedback", help="Plan an instruction and save the approved plan as future training data.")
+    capture_feedback_parser.add_argument("--instruction", required=True)
+    capture_feedback_parser.add_argument("--local-model", action="store_true")
+    capture_feedback_parser.add_argument("--with-screen", action="store_true")
+    capture_feedback_parser.add_argument("--force-screenshot", action="store_true")
+    capture_feedback_parser.add_argument("--dataset-file", default="")
+    capture_feedback_parser.add_argument("--notes", default="")
+    capture_feedback_parser.set_defaults(handler=command_capture_plan_feedback)
+
+    save_feedback_parser = subparsers.add_parser("save-plan-feedback", help="Save an approved plan JSON payload as a training example.")
+    save_feedback_parser.add_argument("--instruction", required=True)
+    save_feedback_parser.add_argument("--plan-json", required=True)
+    save_feedback_parser.add_argument("--approved-plan-json", default="")
+    save_feedback_parser.add_argument("--screen-context-json", default="{}")
+    save_feedback_parser.add_argument("--dataset-file", default="")
+    save_feedback_parser.add_argument("--notes", default="")
+    save_feedback_parser.add_argument("--origin", default="manual")
+    save_feedback_parser.set_defaults(handler=command_save_plan_feedback)
+
+    export_feedback_parser = subparsers.add_parser("export-feedback-dataset", help="Export merged training data from approved feedback examples.")
+    export_feedback_parser.add_argument("--dataset-file", default="")
+    export_feedback_parser.add_argument("--output-file", default="datasets/local_agent_train_feedback.jsonl")
+    export_feedback_parser.add_argument("--include-seed-dataset", action="store_true")
+    export_feedback_parser.add_argument("--keep-duplicates", action="store_true")
+    export_feedback_parser.set_defaults(handler=command_export_feedback_dataset)
 
     operator_dashboard_parser = subparsers.add_parser("operator-dashboard", help="Return operator-mode dashboard data.")
     operator_dashboard_parser.add_argument("--limit", type=int, default=10)

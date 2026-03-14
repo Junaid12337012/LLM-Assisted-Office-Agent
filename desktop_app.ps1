@@ -702,13 +702,14 @@ Set-TextSurfaceStyle -TextBox $agentInputBox
 
 $buttonFlow = New-Object System.Windows.Forms.TableLayoutPanel
 $buttonFlow.Dock = 'Fill'
-$buttonFlow.ColumnCount = 3
+$buttonFlow.ColumnCount = 4
 $buttonFlow.RowCount = 1
 $buttonFlow.AutoScroll = $false
 $buttonFlow.BackColor = $theme.Card
-[void]$buttonFlow.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, $(if ($script:isCompactLayout) { 42 } else { 46 }))))
-[void]$buttonFlow.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, $(if ($script:isCompactLayout) { 38 } else { 36 }))))
-[void]$buttonFlow.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, $(if ($script:isCompactLayout) { 20 } else { 18 }))))
+[void]$buttonFlow.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, $(if ($script:isCompactLayout) { 31 } else { 32 }))))
+[void]$buttonFlow.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, $(if ($script:isCompactLayout) { 24 } else { 24 }))))
+[void]$buttonFlow.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, $(if ($script:isCompactLayout) { 27 } else { 28 }))))
+[void]$buttonFlow.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, $(if ($script:isCompactLayout) { 18 } else { 16 }))))
 [void]$buttonFlow.RowStyles.Add((New-Object System.Windows.Forms.RowStyle([System.Windows.Forms.SizeType]::Percent, 100)))
 [void]$commandLayout.Controls.Add($buttonFlow, 0, 2)
 
@@ -728,13 +729,22 @@ $usePreviewButton.Dock = 'Fill'
 Set-SecondaryButtonStyle -Button $usePreviewButton
 [void]$buttonFlow.Controls.Add($usePreviewButton, 1, 0)
 
+$approveTrainingButton = New-Object System.Windows.Forms.Button
+$approveTrainingButton.Text = if ($script:isCompactLayout) { 'Save' } else { 'Approve + Save' }
+$approveTrainingButton.Size = New-Object System.Drawing.Size($(if ($script:isCompactLayout) { 108 } else { 132 }), 32)
+$approveTrainingButton.Margin = New-Object System.Windows.Forms.Padding(0, 0, 6, 0)
+$approveTrainingButton.Dock = 'Fill'
+$approveTrainingButton.Enabled = $false
+Set-SecondaryButtonStyle -Button $approveTrainingButton
+[void]$buttonFlow.Controls.Add($approveTrainingButton, 2, 0)
+
 $clearInputButton = New-Object System.Windows.Forms.Button
 $clearInputButton.Text = if ($script:isCompactLayout) { 'Clr' } else { 'Clear' }
 $clearInputButton.Size = New-Object System.Drawing.Size($(if ($script:isCompactLayout) { 58 } else { 72 }), 32)
 $clearInputButton.Margin = New-Object System.Windows.Forms.Padding(0)
 $clearInputButton.Dock = 'Fill'
 Set-SecondaryButtonStyle -Button $clearInputButton
-[void]$buttonFlow.Controls.Add($clearInputButton, 2, 0)
+[void]$buttonFlow.Controls.Add($clearInputButton, 3, 0)
 
 $modeFlow = New-Object System.Windows.Forms.FlowLayoutPanel
 $modeFlow.Dock = 'Fill'
@@ -1141,6 +1151,9 @@ $script:currentArtifacts = @()
 $script:parameterInputs = @{}
 $script:parameterFieldPanels = @()
 $script:selectedCommand = $null
+$script:lastAssistantInstruction = ''
+$script:lastAssistantPlan = $null
+$script:lastAssistantScreenContext = @{}
 $script:commandList = $commandList
 $script:catalogSearchBox = $catalogSearchBox
 $script:catalogCountLabel = $catalogCountLabel
@@ -1165,6 +1178,7 @@ $script:workflowMetric = $workflowMetric
 $script:runMetric = $runMetric
 $script:statusMetric = $statusMetric
 $script:heroModeLabel = $heroModeLabel
+$script:approveTrainingButton = $approveTrainingButton
 $script:quickCard = $quickCard
 $script:quickButtonsHost = $quickButtonsHost
 $script:preferencesPath = Join-Path $repoRoot 'data\gui_preferences.json'
@@ -1276,19 +1290,23 @@ function Resize-QuickButtons {
 function Resize-CommandBarControls {
     if ($null -eq $buttonFlow) { return }
     if ($script:isCompactLayout) {
-        $buttonFlow.ColumnStyles[0].Width = 42
-        $buttonFlow.ColumnStyles[1].Width = 38
-        $buttonFlow.ColumnStyles[2].Width = 20
+        $buttonFlow.ColumnStyles[0].Width = 31
+        $buttonFlow.ColumnStyles[1].Width = 24
+        $buttonFlow.ColumnStyles[2].Width = 27
+        $buttonFlow.ColumnStyles[3].Width = 18
         $runInputButton.Text = 'Run'
         $usePreviewButton.Text = 'Plan'
+        $approveTrainingButton.Text = 'Save'
         $clearInputButton.Text = 'Clr'
     }
     else {
-        $buttonFlow.ColumnStyles[0].Width = 46
-        $buttonFlow.ColumnStyles[1].Width = 36
-        $buttonFlow.ColumnStyles[2].Width = 18
+        $buttonFlow.ColumnStyles[0].Width = 32
+        $buttonFlow.ColumnStyles[1].Width = 24
+        $buttonFlow.ColumnStyles[2].Width = 28
+        $buttonFlow.ColumnStyles[3].Width = 16
         $runInputButton.Text = 'Run Typed Command'
         $usePreviewButton.Text = 'Preview Plan'
+        $approveTrainingButton.Text = 'Approve + Save'
         $clearInputButton.Text = 'Clear'
     }
 }
@@ -2070,6 +2088,79 @@ function Update-LocalAgentOptions {
     }
 }
 
+function Update-TrainingApprovalState {
+    if ($null -eq $script:approveTrainingButton) { return }
+    $enabled = $false
+    if ($null -ne $script:lastAssistantPlan -and -not [string]::IsNullOrWhiteSpace($script:lastAssistantInstruction)) {
+        $commandCount = @($script:lastAssistantPlan.commands).Count
+        $currentInstruction = [string]$script:agentInputBox.Text
+        $enabled = ($commandCount -gt 0 -and $currentInstruction.Trim() -eq $script:lastAssistantInstruction.Trim())
+    }
+    $script:approveTrainingButton.Enabled = $enabled
+}
+
+function Clear-AssistantPlanState {
+    $script:lastAssistantInstruction = ''
+    $script:lastAssistantPlan = $null
+    $script:lastAssistantScreenContext = @{}
+    Update-TrainingApprovalState
+}
+
+function Set-AssistantPlanState {
+    param(
+        [string]$Instruction,
+        [object]$Plan,
+        [object]$ScreenContext
+    )
+    $script:lastAssistantInstruction = [string]$Instruction
+    $script:lastAssistantPlan = $Plan
+    if ($null -eq $ScreenContext) {
+        $script:lastAssistantScreenContext = @{}
+    }
+    else {
+        $script:lastAssistantScreenContext = $ScreenContext
+    }
+    Update-TrainingApprovalState
+}
+
+function Save-AssistantPlanFeedback {
+    if ($null -eq $script:lastAssistantPlan -or [string]::IsNullOrWhiteSpace($script:lastAssistantInstruction)) {
+        [System.Windows.Forms.MessageBox]::Show('Preview an assistant plan first, then approve it for training.', 'No Plan Ready', 'OK', 'Warning') | Out-Null
+        return
+    }
+    $currentInstruction = [string]$script:agentInputBox.Text
+    if ($currentInstruction.Trim() -ne $script:lastAssistantInstruction.Trim()) {
+        Clear-AssistantPlanState
+        [System.Windows.Forms.MessageBox]::Show('The request changed after the last preview. Preview the plan again before saving it for training.', 'Plan Outdated', 'OK', 'Warning') | Out-Null
+        return
+    }
+
+    try {
+        $planJson = $script:lastAssistantPlan | ConvertTo-Json -Depth 12 -Compress
+        $screenJson = $script:lastAssistantScreenContext | ConvertTo-Json -Depth 8 -Compress
+        $origin = if ([string]$script:lastAssistantPlan.source -match 'local') { 'desktop-gui-local' } else { 'desktop-gui' }
+        $payload = Invoke-BackendJson -Arguments @(
+            'save-plan-feedback',
+            '--instruction', $script:lastAssistantInstruction,
+            '--plan-json', $planJson,
+            '--screen-context-json', $screenJson,
+            '--origin', $origin,
+            '--notes', 'Approved from desktop GUI'
+        )
+        $recordId = [string]$payload.record.metadata.record_id
+        $capturedAt = [string]$payload.record.metadata.captured_at
+        $datasetFile = [string]$payload.dataset_file
+        Set-StatusText -Text 'Saved' -Color $theme.Success
+        $script:detailBox.Text = (Format-AssistantPlanText -Plan $script:lastAssistantPlan) + "`r`n`r`nSaved for training:`r`nRecord: $recordId`r`nSaved at: $capturedAt`r`nDataset: $datasetFile"
+        Clear-AssistantPlanState
+    }
+    catch {
+        Set-StatusText -Text 'Save Failed' -Color $theme.Danger
+        $script:detailBox.Text = $_.Exception.Message
+        [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Training Save Failed', 'OK', 'Error') | Out-Null
+    }
+}
+
 function Set-StatusText {
     param([string]$Text, [System.Drawing.Color]$Color)
     $script:statusMetric.ValueLabel.Text = $Text
@@ -2377,6 +2468,7 @@ function Show-AssistantPlanPreview {
     }
     try {
         $payload = Get-AssistantPlanPayload -Instruction $Instruction
+        Set-AssistantPlanState -Instruction $Instruction -Plan $payload.plan -ScreenContext $payload.screen_context
         $planText = Format-AssistantPlanText -Plan $payload.plan
         $script:detailBox.Text = $planText
         if ($payload.plan.commands.Count -eq 1) {
@@ -2393,6 +2485,7 @@ function Show-AssistantPlanPreview {
         }
     }
     catch {
+        Clear-AssistantPlanState
         Set-StatusText -Text 'Plan Error' -Color $theme.Danger
         $script:detailBox.Text = $_.Exception.Message
         [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Plan Error', 'OK', 'Error') | Out-Null
@@ -2418,6 +2511,7 @@ function Invoke-RunInstruction {
         $script:form.UseWaitCursor = $true
         [System.Windows.Forms.Application]::DoEvents()
         $payload = Invoke-BackendJson -Arguments $baseArguments
+        Set-AssistantPlanState -Instruction $Instruction -Plan $payload.plan -ScreenContext $payload.screen_context
         if ($payload.outcome.status -eq 'needs_confirmation') {
             $message = (Format-AssistantPlanText -Plan $payload.plan) + "`r`n`r`nRun this reviewed plan?"
             $decision = [System.Windows.Forms.MessageBox]::Show($message, 'Confirm Assistant Plan', 'YesNo', 'Question')
@@ -2427,6 +2521,7 @@ function Invoke-RunInstruction {
                 return
             }
             $payload = Invoke-BackendJson -Arguments ($baseArguments + '--confirm-plan')
+            Set-AssistantPlanState -Instruction $Instruction -Plan $payload.plan -ScreenContext $payload.screen_context
         }
 
         if ($payload.outcome.status -in @('needs_clarification', 'unmatched')) {
@@ -2457,6 +2552,7 @@ function Invoke-RunInstruction {
         }
     }
     catch {
+        Clear-AssistantPlanState
         Set-StatusText -Text 'Failed' -Color $theme.Danger
         $script:detailBox.Text = $_.Exception.Message
         [System.Windows.Forms.MessageBox]::Show($_.Exception.Message, 'Run Failed', 'OK', 'Error') | Out-Null
@@ -2601,12 +2697,21 @@ $usePreviewButton.Add_Click({
         $script:agentInputBox.SelectionStart = $script:agentInputBox.Text.Length
     }
 })
-$clearInputButton.Add_Click({ $script:agentInputBox.Clear(); $script:agentInputBox.Focus() })
+$approveTrainingButton.Add_Click({ Save-AssistantPlanFeedback })
+$clearInputButton.Add_Click({ Clear-AssistantPlanState; $script:agentInputBox.Clear(); $script:agentInputBox.Focus() })
+$agentInputBox.Add_TextChanged({
+    if ($null -ne $script:lastAssistantPlan -and $script:agentInputBox.Text.Trim() -ne $script:lastAssistantInstruction.Trim()) {
+        Clear-AssistantPlanState
+    }
+    else {
+        Update-TrainingApprovalState
+    }
+})
 $agentInputBox.Add_KeyDown({ if ($_.KeyCode -eq [System.Windows.Forms.Keys]::Enter) { $_.SuppressKeyPress = $true; $runInputButton.PerformClick() } })
 $safeModeCheckbox.Add_CheckedChanged({ Update-ModeText; Save-UiPreferences })
 $confirmRiskCheckbox.Add_CheckedChanged({ Update-ModeText; Save-UiPreferences })
-$localModelCheckbox.Add_CheckedChanged({ Update-LocalAgentOptions; Update-ModeText; Save-UiPreferences })
-$screenContextCheckbox.Add_CheckedChanged({ Update-ModeText; Save-UiPreferences })
+$localModelCheckbox.Add_CheckedChanged({ Clear-AssistantPlanState; Update-LocalAgentOptions; Update-ModeText; Save-UiPreferences })
+$screenContextCheckbox.Add_CheckedChanged({ Clear-AssistantPlanState; Update-ModeText; Save-UiPreferences })
 $parameterFieldsHost.Add_Resize({ Update-ParameterFieldWidths })
 $quickButtonsHost.Add_Resize({ Resize-QuickButtons })
 $buttonFlow.Add_Resize({ Resize-CommandBarControls })

@@ -23,6 +23,21 @@ This PC is a Windows CPU-only setup, so use a very small local model first.
 .\.tools\python311\runtime\python.exe .\llm\dataset_validator.py .\datasets\local_agent_eval.jsonl
 ```
 
+## Capture approved plans as new training data
+
+```powershell
+.\.tools\python311\runtime\python.exe .\desktop_backend.py capture-plan-feedback --instruction "print all today voucher" --local-model --with-screen
+.\.tools\python311\runtime\python.exe .\desktop_backend.py export-feedback-dataset --include-seed-dataset
+```
+
+This stores approved examples in:
+
+- `data/feedback/local_agent_feedback.jsonl`
+
+and can export a merged train set to:
+
+- `datasets/local_agent_train_feedback.jsonl`
+
 ## Check local OpenAI-compatible server
 
 ```powershell
@@ -77,6 +92,17 @@ $env:LOCAL_AGENT_MODEL='your-loaded-model-id'
   --output-dir .\artifacts\local_agent_adapter
 ```
 
+The trainer now also accepts extra train files:
+
+```powershell
+.\.tools\python311\runtime\python.exe .\llm_training\train_peft.py `
+  --base-model sshleifer/tiny-gpt2 `
+  --train-file .\datasets\local_agent_train.jsonl `
+  --extra-train-file .\data\feedback\local_agent_feedback.jsonl `
+  --eval-file .\datasets\local_agent_eval.jsonl `
+  --output-dir .\artifacts\local_agent_adapter_feedback
+```
+
 ## Tiny smoke-train used on this machine
 
 ```powershell
@@ -87,6 +113,37 @@ This writes:
 
 - `artifacts/local_agent_adapter_tiny/adapter_model.safetensors`
 - `artifacts/local_agent_adapter_tiny/training_manifest.json`
+
+## Feedback retrain loop
+
+The fastest one-command cycle for this repo is:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\llm_training\train_feedback_loop.ps1
+```
+
+That:
+
+- merges the seed train set with `data/feedback/local_agent_feedback.jsonl`
+- writes `datasets/local_agent_train_merged.jsonl`
+- runs a tiny CPU-safe fine-tune
+- writes the adapter to `artifacts/local_agent_adapter_feedback`
+
+## Evaluate the planner
+
+Heuristic planner:
+
+```powershell
+.\.tools\python311\runtime\python.exe .\llm_training\evaluate_local_agent.py
+```
+
+Local model planner:
+
+```powershell
+$env:LOCAL_AGENT_BASE_URL='http://127.0.0.1:11434/v1'
+$env:LOCAL_AGENT_MODEL='qwen2.5:0.5b'
+.\.tools\python311\runtime\python.exe .\llm_training\evaluate_local_agent.py --use-local-model
+```
 
 ## Use the trained model
 
