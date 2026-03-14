@@ -3,7 +3,7 @@
     "confirm_risky":  true,
     "run_status":  "All",
     "run_search":  "",
-    "selected_command":  "mvp.download_report",
+    "selected_command":  "browser.download_daily_report",
     "last_input":  "download report",
     "window_width":  1358,
     "window_height":  720

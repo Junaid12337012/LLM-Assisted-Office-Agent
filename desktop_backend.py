@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import sys
 from typing import Any
@@ -136,6 +137,10 @@ def _parse_json_arg(raw_value: str, *, default: Any) -> Any:
     if not raw_value:
         return default
     return json.loads(raw_value)
+
+
+def _read_bool_env(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _serialize_session_payload(details: dict[str, Any]) -> dict[str, Any]:
@@ -317,6 +322,15 @@ def command_run(args: argparse.Namespace) -> dict[str, Any]:
 
 def command_plan_instruction(args: argparse.Namespace) -> dict[str, Any]:
     services = build_services()
+    if getattr(args, "local_model", False) or _read_bool_env("PREFER_LOCAL_AGENT"):
+        local_agent = _build_local_agent(services)
+        plan = local_agent.plan(
+            args.instruction,
+            include_screen=getattr(args, "with_screen", False) or _read_bool_env("LOCAL_AGENT_WITH_SCREEN"),
+            force_screenshot=getattr(args, "force_screenshot", False),
+        )
+        return {"plan": _serialize_plan(plan), "screen_context": local_agent.last_screen_context}
+
     if services.assistant is None:
         raise SystemExit("Assistant planner is not available.")
     plan = services.assistant.plan(args.instruction)
@@ -325,6 +339,23 @@ def command_plan_instruction(args: argparse.Namespace) -> dict[str, Any]:
 
 def command_run_instruction(args: argparse.Namespace) -> dict[str, Any]:
     services = build_services()
+    if getattr(args, "local_model", False) or _read_bool_env("PREFER_LOCAL_AGENT"):
+        local_agent = _build_local_agent(services)
+        plan = local_agent.plan(
+            args.instruction,
+            include_screen=getattr(args, "with_screen", False) or _read_bool_env("LOCAL_AGENT_WITH_SCREEN"),
+            force_screenshot=getattr(args, "force_screenshot", False),
+        )
+        payload = execute_assistant_plan(
+            services,
+            plan,
+            safe_mode=args.safe_mode,
+            confirm_risky=args.confirm_risky,
+            confirm_plan=args.confirm_plan,
+        )
+        payload["screen_context"] = local_agent.last_screen_context
+        return payload
+
     if services.assistant is None:
         raise SystemExit("Assistant planner is not available.")
     plan = services.assistant.plan(args.instruction)
@@ -335,6 +366,60 @@ def command_run_instruction(args: argparse.Namespace) -> dict[str, Any]:
         confirm_risky=args.confirm_risky,
         confirm_plan=args.confirm_plan,
     )
+
+
+def _build_local_agent(services: Any) -> Any:
+    if services.assistant is None:
+        raise SystemExit("Assistant planner is not available.")
+    from llm.local_agent import LocalAgentPlanner
+    from llm.local_openai_client import LocalOpenAICompatibleClient
+    from llm.screen_context import ScreenContextCollector
+
+    tool_registry = services.assistant.tool_registry
+    screen_collector = ScreenContextCollector(
+        services.engine.executor.desktop_controller,
+        services.engine.executor.vision_capture_controller,
+        base_dir=services.base_dir,
+    )
+    return LocalAgentPlanner(
+        LocalOpenAICompatibleClient.from_env(),
+        tool_registry,
+        screen_collector,
+        fallback_planner=services.assistant,
+    )
+
+
+def command_local_agent_plan(args: argparse.Namespace) -> dict[str, Any]:
+    services = build_services()
+    local_agent = _build_local_agent(services)
+    plan = local_agent.plan(
+        args.instruction,
+        include_screen=args.with_screen,
+        force_screenshot=args.force_screenshot,
+    )
+    return {
+        "plan": _serialize_plan(plan),
+        "screen_context": local_agent.last_screen_context,
+    }
+
+
+def command_local_agent_run(args: argparse.Namespace) -> dict[str, Any]:
+    services = build_services()
+    local_agent = _build_local_agent(services)
+    plan = local_agent.plan(
+        args.instruction,
+        include_screen=args.with_screen,
+        force_screenshot=args.force_screenshot,
+    )
+    payload = execute_assistant_plan(
+        services,
+        plan,
+        safe_mode=args.safe_mode,
+        confirm_risky=args.confirm_risky,
+        confirm_plan=args.confirm_plan,
+    )
+    payload["screen_context"] = local_agent.last_screen_context
+    return payload
 
 
 def command_operator_dashboard(args: argparse.Namespace) -> dict[str, Any]:
@@ -570,14 +655,35 @@ def build_parser() -> argparse.ArgumentParser:
 
     plan_parser = subparsers.add_parser("plan-instruction", help="Map a natural-language instruction to safe workflow commands.")
     plan_parser.add_argument("--instruction", required=True)
+    plan_parser.add_argument("--local-model", action="store_true")
+    plan_parser.add_argument("--with-screen", action="store_true")
+    plan_parser.add_argument("--force-screenshot", action="store_true")
     plan_parser.set_defaults(handler=command_plan_instruction)
 
     run_instruction_parser = subparsers.add_parser("run-instruction", help="Plan and run a natural-language instruction safely.")
     run_instruction_parser.add_argument("--instruction", required=True)
+    run_instruction_parser.add_argument("--local-model", action="store_true")
+    run_instruction_parser.add_argument("--with-screen", action="store_true")
+    run_instruction_parser.add_argument("--force-screenshot", action="store_true")
     run_instruction_parser.add_argument("--safe-mode", action="store_true")
     run_instruction_parser.add_argument("--confirm-risky", action="store_true")
     run_instruction_parser.add_argument("--confirm-plan", action="store_true")
     run_instruction_parser.set_defaults(handler=command_run_instruction)
+
+    local_plan_parser = subparsers.add_parser("local-agent-plan", help="Plan an instruction with a local OpenAI-compatible model.")
+    local_plan_parser.add_argument("--instruction", required=True)
+    local_plan_parser.add_argument("--with-screen", action="store_true")
+    local_plan_parser.add_argument("--force-screenshot", action="store_true")
+    local_plan_parser.set_defaults(handler=command_local_agent_plan)
+
+    local_run_parser = subparsers.add_parser("local-agent-run", help="Plan and run an instruction with a local OpenAI-compatible model.")
+    local_run_parser.add_argument("--instruction", required=True)
+    local_run_parser.add_argument("--with-screen", action="store_true")
+    local_run_parser.add_argument("--force-screenshot", action="store_true")
+    local_run_parser.add_argument("--safe-mode", action="store_true")
+    local_run_parser.add_argument("--confirm-risky", action="store_true")
+    local_run_parser.add_argument("--confirm-plan", action="store_true")
+    local_run_parser.set_defaults(handler=command_local_agent_run)
 
     operator_dashboard_parser = subparsers.add_parser("operator-dashboard", help="Return operator-mode dashboard data.")
     operator_dashboard_parser.add_argument("--limit", type=int, default=10)

@@ -167,7 +167,14 @@ function Complete-AgentCommand {
 function Get-AssistantPlanPayload {
     param([string]$Instruction)
     if ([string]::IsNullOrWhiteSpace($Instruction)) { return $null }
-    return Invoke-BackendJson -Arguments @('plan-instruction', '--instruction', $Instruction)
+    $arguments = @('plan-instruction', '--instruction', $Instruction)
+    if ($null -ne $script:localModelCheckbox -and $script:localModelCheckbox.Checked) {
+        $arguments += '--local-model'
+        if ($null -ne $script:screenContextCheckbox -and $script:screenContextCheckbox.Checked) {
+            $arguments += '--with-screen'
+        }
+    }
+    return Invoke-BackendJson -Arguments $arguments
 }
 
 function Format-AssistantPlanText {
@@ -754,6 +761,24 @@ $confirmRiskCheckbox.ForeColor = $theme.Text
 $confirmRiskCheckbox.Margin = New-Object System.Windows.Forms.Padding(0, 4, 0, 0)
 [void]$modeFlow.Controls.Add($confirmRiskCheckbox)
 
+$localModelCheckbox = New-Object System.Windows.Forms.CheckBox
+$localModelCheckbox.Text = if ($script:isCompactLayout) { 'Local' } else { 'Local model' }
+$localModelCheckbox.Checked = $true
+$localModelCheckbox.AutoSize = $true
+$localModelCheckbox.Font = $fonts.Small
+$localModelCheckbox.ForeColor = $theme.Text
+$localModelCheckbox.Margin = New-Object System.Windows.Forms.Padding(12, 4, 0, 0)
+[void]$modeFlow.Controls.Add($localModelCheckbox)
+
+$screenContextCheckbox = New-Object System.Windows.Forms.CheckBox
+$screenContextCheckbox.Text = if ($script:isCompactLayout) { 'Screen' } else { 'Read screen' }
+$screenContextCheckbox.Checked = $true
+$screenContextCheckbox.AutoSize = $true
+$screenContextCheckbox.Font = $fonts.Small
+$screenContextCheckbox.ForeColor = $theme.Text
+$screenContextCheckbox.Margin = New-Object System.Windows.Forms.Padding(12, 4, 0, 0)
+[void]$modeFlow.Controls.Add($screenContextCheckbox)
+
 $shortcutFlow = New-Object System.Windows.Forms.FlowLayoutPanel
 $shortcutFlow.Dock = 'Fill'
 $shortcutFlow.FlowDirection = 'LeftToRight'
@@ -1291,6 +1316,8 @@ function Save-UiPreferences {
         $payload = [ordered]@{
             safe_mode = [bool]$safeModeCheckbox.Checked
             confirm_risky = [bool]$confirmRiskCheckbox.Checked
+            prefer_local_model = [bool]$localModelCheckbox.Checked
+            read_screen_context = [bool]$screenContextCheckbox.Checked
             run_status = [string]$script:statusFilterBox.SelectedItem
             run_search = [string]$script:runSearchBox.Text
             selected_command = if ($script:selectedCommand) { [string]$script:selectedCommand.name } else { '' }
@@ -1402,6 +1429,8 @@ function Apply-UiPreferences {
     param([hashtable]$Preferences)
     if ($Preferences.ContainsKey('safe_mode')) { $safeModeCheckbox.Checked = [bool]$Preferences['safe_mode'] }
     if ($Preferences.ContainsKey('confirm_risky')) { $confirmRiskCheckbox.Checked = [bool]$Preferences['confirm_risky'] }
+    if ($Preferences.ContainsKey('prefer_local_model')) { $localModelCheckbox.Checked = [bool]$Preferences['prefer_local_model'] }
+    if ($Preferences.ContainsKey('read_screen_context')) { $screenContextCheckbox.Checked = [bool]$Preferences['read_screen_context'] }
     if ($Preferences.ContainsKey('run_status')) {
         $targetStatus = [string]$Preferences['run_status']
         $index = $script:statusFilterBox.FindStringExact($targetStatus)
@@ -2023,11 +2052,22 @@ function Show-OperatorDashboardDialog {
 function Update-ModeText {
     $safeText = if ($safeModeCheckbox.Checked) { 'Safe mode on' } else { 'Safe mode off' }
     $confirmText = if ($confirmRiskCheckbox.Checked) { 'risky actions auto-approved' } else { 'risky actions require manual approval' }
+    $plannerText = if ($localModelCheckbox.Checked) { 'local model active' } else { 'built-in planner active' }
+    $screenText = if ($screenContextCheckbox.Checked) { 'screen context on' } else { 'screen context off' }
     if ($script:isCompactLayout) {
         $safeText = if ($safeModeCheckbox.Checked) { 'Safe on' } else { 'Safe off' }
         $confirmText = if ($confirmRiskCheckbox.Checked) { 'risky allowed' } else { 'risky blocked' }
+        $plannerText = if ($localModelCheckbox.Checked) { 'Local on' } else { 'Local off' }
+        $screenText = if ($screenContextCheckbox.Checked) { 'screen on' } else { 'screen off' }
     }
-    $script:heroModeLabel.Text = "$safeText, $confirmText."
+    $script:heroModeLabel.Text = "$safeText, $confirmText, $plannerText, $screenText."
+}
+
+function Update-LocalAgentOptions {
+    $screenContextCheckbox.Enabled = $localModelCheckbox.Checked
+    if (-not $localModelCheckbox.Checked) {
+        $screenContextCheckbox.Checked = $false
+    }
 }
 
 function Set-StatusText {
@@ -2366,6 +2406,10 @@ function Invoke-RunInstruction {
         return
     }
     $baseArguments = @('run-instruction', '--instruction', $Instruction)
+    if ($localModelCheckbox.Checked) {
+        $baseArguments += '--local-model'
+        if ($screenContextCheckbox.Checked) { $baseArguments += '--with-screen' }
+    }
     if ($safeModeCheckbox.Checked) { $baseArguments += '--safe-mode' }
     if ($confirmRiskCheckbox.Checked) { $baseArguments += '--confirm-risky' }
     try {
@@ -2561,6 +2605,8 @@ $clearInputButton.Add_Click({ $script:agentInputBox.Clear(); $script:agentInputB
 $agentInputBox.Add_KeyDown({ if ($_.KeyCode -eq [System.Windows.Forms.Keys]::Enter) { $_.SuppressKeyPress = $true; $runInputButton.PerformClick() } })
 $safeModeCheckbox.Add_CheckedChanged({ Update-ModeText; Save-UiPreferences })
 $confirmRiskCheckbox.Add_CheckedChanged({ Update-ModeText; Save-UiPreferences })
+$localModelCheckbox.Add_CheckedChanged({ Update-LocalAgentOptions; Update-ModeText; Save-UiPreferences })
+$screenContextCheckbox.Add_CheckedChanged({ Update-ModeText; Save-UiPreferences })
 $parameterFieldsHost.Add_Resize({ Update-ParameterFieldWidths })
 $quickButtonsHost.Add_Resize({ Resize-QuickButtons })
 $buttonFlow.Add_Resize({ Resize-CommandBarControls })
@@ -2571,6 +2617,7 @@ $form.Add_FormClosing({ Save-UiPreferences })
 $form.Add_Shown({
     Apply-SplitterConstraints
     Update-ResponsiveLayout
+    Update-LocalAgentOptions
     Resize-QuickButtons
     Resize-CommandBarControls
     Resize-RunColumns

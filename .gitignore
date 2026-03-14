@@ -1,0 +1,29 @@
+# Python caches
+__pycache__/
+*.py[cod]
+*.pyo
+# Test and tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+# Local temporary files
+*.log
+.tmp_*
+# Local portable Python bootstrap and installed packages
+.tools/get-pip.py
+.tools/python311/runtime/Lib/
+.tools/python311/runtime/Scripts/
+.tools/python311/runtime/share/
+# Generated runtime data
+data/memory.db
+data/gui_preferences.json
+data/evidence/
+data/local_agent/
+data/training/
+# Local model outputs
+artifacts/
+# OS/editor noise
+.DS_Store
+Thumbs.db

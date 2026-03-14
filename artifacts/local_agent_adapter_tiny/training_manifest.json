@@ -1,0 +1,19 @@
+{
+  "base_model": "sshleifer/tiny-gpt2",
+  "train_file": "datasets\\local_agent_train.jsonl",
+  "eval_file": "datasets\\local_agent_eval.jsonl",
+  "epochs": 1.0,
+  "learning_rate": 0.0001,
+  "batch_size": 1,
+  "gradient_accumulation_steps": 1,
+  "max_length": 1024,
+  "target_modules": [
+    "c_attn",
+    "c_proj"
+  ],
+  "lora": {
+    "r": 16,
+    "alpha": 32,
+    "dropout": 0.05
+  }
+}

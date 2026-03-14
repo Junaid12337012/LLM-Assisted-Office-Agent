@@ -57,6 +57,75 @@ The current build now includes a controlled orchestration layer:
 - repeat-style requests can reuse the latest successful run from history
 - plan preview and execution stay inside the desktop app and backend bridge, so validation, logging, and review rules still apply
 
+## Local model foundation
+
+The current build also includes a local-model planning path for teams who want
+an open-source model behind an OpenAI-compatible API instead of a hosted model:
+
+- `desktop_backend.py local-agent-plan` asks a local `/v1/chat/completions` style endpoint for a plan
+- `desktop_backend.py local-agent-run` can execute that plan through the same safety and workflow engine
+- screen reading is event-driven, not a constant loop; the collector only captures a new screenshot when requested or when the screen fingerprint changes
+- sample fine-tune datasets live in `datasets/local_agent_train.jsonl` and `datasets/local_agent_eval.jsonl`
+- `llm/dataset_validator.py` validates the JSONL training format before you start a fine-tune run
+
+Example local planning flow:
+
+```powershell
+$env:LOCAL_AGENT_BASE_URL='http://127.0.0.1:1234/v1'
+$env:LOCAL_AGENT_MODEL='my-local-agent'
+.\.tools\python311\runtime\python.exe .\desktop_backend.py local-agent-plan --instruction "print all today voucher" --with-screen
+```
+
+The desktop GUI can now prefer the local model directly from the command bar.
+Use the `Local model` and `Read screen` toggles in the desktop window, or call:
+
+```powershell
+.\.tools\python311\runtime\python.exe .\desktop_backend.py plan-instruction --instruction "print all today voucher" --local-model --with-screen
+```
+
+## Fine-tuning
+
+For local fine-tuning, this repo now includes a `Transformers + PEFT` stack in `llm_training/`.
+
+```powershell
+.\.tools\python311\runtime\python.exe -m pip install -r .\requirements-train.txt
+.\.tools\python311\runtime\python.exe .\llm_training\train_peft.py --base-model Qwen/Qwen2.5-3B-Instruct
+```
+
+More details are in `llm_training/README.md`.
+
+The repo also includes a CPU-safe smoke-train command that already completed on this machine:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\llm_training\smoke_train_tiny.ps1
+```
+
+That writes a tiny LoRA adapter to `artifacts/local_agent_adapter_tiny`.
+
+## Local server setup
+
+For this Windows CPU-only machine, the most practical local runtime is a very small model.
+Right now the repo is set up for:
+
+- Ollama with `qwen2.5:0.5b` on `http://127.0.0.1:11434/v1`
+- LM Studio on `http://127.0.0.1:1234/v1`
+
+Recommended on this PC:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\llm_training\start_ollama_server.ps1
+.\.tools\python311\runtime\python.exe .\desktop_backend.py local-agent-plan --instruction "print all today voucher" --with-screen
+```
+
+LM Studio option:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\llm_training\start_lm_studio_server.ps1
+.\.tools\python311\runtime\python.exe .\desktop_backend.py local-agent-plan --instruction "print all today voucher" --with-screen
+```
+
+If you do not set env vars manually, the local client now probes LM Studio first and then Ollama, and it picks the first live model it finds.
+
 ## Phase 4 foundation
 
 The current build now includes the first operator-mode foundation:
